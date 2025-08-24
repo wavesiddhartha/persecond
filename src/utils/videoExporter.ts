@@ -22,7 +22,7 @@ async function initializeFFmpeg(): Promise<FFmpeg> {
   return ffmpeg;
 }
 
-// Get optimal codec settings for different formats
+// Get optimal codec settings for different formats - preserves original format exactly
 function getCodecSettings(format: string) {
   const formatLower = format.toLowerCase();
   
@@ -30,42 +30,104 @@ function getCodecSettings(format: string) {
     case 'mov':
       return {
         codec: 'libx264',
+        audioCodec: 'aac',
         pixelFormat: 'yuv420p',
         container: 'mov',
         extension: 'mov',
-        mimeType: 'video/quicktime'
+        mimeType: 'video/quicktime',
+        ffmpegFormat: 'mov'
       };
     case 'mp4':
       return {
         codec: 'libx264',
+        audioCodec: 'aac',
         pixelFormat: 'yuv420p',
         container: 'mp4',
         extension: 'mp4',
-        mimeType: 'video/mp4'
+        mimeType: 'video/mp4',
+        ffmpegFormat: 'mp4'
       };
     case 'avi':
       return {
         codec: 'libx264',
+        audioCodec: 'aac',
         pixelFormat: 'yuv420p',
         container: 'avi',
         extension: 'avi',
-        mimeType: 'video/x-msvideo'
+        mimeType: 'video/x-msvideo',
+        ffmpegFormat: 'avi'
       };
     case 'mkv':
       return {
         codec: 'libx264',
+        audioCodec: 'aac',
         pixelFormat: 'yuv420p',
         container: 'matroska',
         extension: 'mkv',
-        mimeType: 'video/x-matroska'
+        mimeType: 'video/x-matroska',
+        ffmpegFormat: 'matroska'
       };
-    default:
+    case 'webm':
+      return {
+        codec: 'libvpx-vp9',
+        audioCodec: 'libopus',
+        pixelFormat: 'yuv420p',
+        container: 'webm',
+        extension: 'webm',
+        mimeType: 'video/webm',
+        ffmpegFormat: 'webm'
+      };
+    case 'm4v':
       return {
         codec: 'libx264',
+        audioCodec: 'aac',
+        pixelFormat: 'yuv420p',
+        container: 'mp4',
+        extension: 'm4v',
+        mimeType: 'video/mp4',
+        ffmpegFormat: 'mp4'
+      };
+    case '3gp':
+      return {
+        codec: 'libx264',
+        audioCodec: 'aac',
+        pixelFormat: 'yuv420p',
+        container: '3gp',
+        extension: '3gp',
+        mimeType: 'video/3gpp',
+        ffmpegFormat: '3gp'
+      };
+    case 'flv':
+      return {
+        codec: 'libx264',
+        audioCodec: 'aac',
+        pixelFormat: 'yuv420p',
+        container: 'flv',
+        extension: 'flv',
+        mimeType: 'video/x-flv',
+        ffmpegFormat: 'flv'
+      };
+    case 'wmv':
+      return {
+        codec: 'libx264',
+        audioCodec: 'aac',
+        pixelFormat: 'yuv420p',
+        container: 'asf',
+        extension: 'wmv',
+        mimeType: 'video/x-ms-wmv',
+        ffmpegFormat: 'asf'
+      };
+    default:
+      // Fallback to MP4 for unknown formats
+      console.warn(`Unknown format "${format}", defaulting to MP4`);
+      return {
+        codec: 'libx264',
+        audioCodec: 'aac',
         pixelFormat: 'yuv420p',
         container: 'mp4',
         extension: 'mp4',
-        mimeType: 'video/mp4'
+        mimeType: 'video/mp4',
+        ffmpegFormat: 'mp4'
       };
   }
 }
@@ -307,36 +369,57 @@ async function exportVideoWithFFmpeg(
     
     console.log(`🎬 Using framerate: ${frameRate.toFixed(2)} fps`);
     
-    // Write original video for audio extraction
-    const originalVideoName = 'original_video.' + (videoInfo.format.toLowerCase());
+    // Write original video for audio extraction - preserve original format
+    const originalExtension = videoInfo.format.toLowerCase();
+    const originalVideoName = `original_video.${originalExtension}`;
     await ffmpegInstance.writeFile(originalVideoName, await fetchFile(videoInfo.file));
-    console.log('✅ Original video loaded for audio extraction');
+    console.log(`✅ Original video loaded for audio extraction (${originalExtension.toUpperCase()} format)`);
     
     onProgress?.(80);
     
-    // Generate output filename with original format
+    // Generate output filename with EXACT original format
     const outputFileName = `output.${codecSettings.extension}`;
+    console.log(`🎯 Preserving original format: ${videoInfo.format.toUpperCase()} → ${codecSettings.extension.toUpperCase()}`);
     
-    // Enhanced FFmpeg command with lossless/high-quality settings
+    // Enhanced FFmpeg command with format-specific settings
     const ffmpegArgs = [
       '-framerate', frameRate.toFixed(3),
-      '-i', 'frame_%06d.png',      // Use PNG input for lossless quality
-      '-i', originalVideoName,      // Original video for audio
-      '-c:v', 'libx264',           // Video codec
-      '-preset', 'slow',           // Best quality preset
-      '-crf', '18',                // Near-lossless quality (18 is visually lossless)
-      '-pix_fmt', 'yuv420p',       // Compatible pixel format
-      '-c:a', 'aac',               // Audio codec
-      '-b:a', '320k',              // High-quality audio bitrate
-      '-ar', '48000',              // High audio sample rate
-      '-ac', '2',                  // Stereo audio
-      '-map', '0:v:0',             // Video from processed frames
-      '-map', '1:a:0?',            // Audio from original video (optional)
-      '-shortest',                 // Match shortest stream duration
-      '-movflags', '+faststart',   // Web optimization
-      '-y',                        // Overwrite output
+      '-i', 'frame_%06d.png',               // Use PNG input for lossless quality
+      '-i', originalVideoName,               // Original video for audio
+      '-c:v', codecSettings.codec,          // Format-specific video codec
+      '-c:a', codecSettings.audioCodec,     // Format-specific audio codec
+      '-preset', 'slow',                    // Best quality preset
+      '-crf', '18',                         // Near-lossless quality
+      '-pix_fmt', codecSettings.pixelFormat, // Format-specific pixel format
+      '-b:a', '320k',                       // High-quality audio bitrate
+      '-ar', '48000',                       // High audio sample rate
+      '-ac', '2',                           // Stereo audio
+      '-map', '0:v:0',                      // Video from processed frames
+      '-map', '1:a:0?',                     // Audio from original video (optional)
+      '-shortest',                          // Match shortest stream duration
+      '-f', codecSettings.ffmpegFormat,    // Force specific output format
+      '-y',                                 // Overwrite output
       outputFileName
     ];
+    
+    // Add format-specific optimizations
+    if (codecSettings.extension === 'mov' || codecSettings.extension === 'mp4') {
+      ffmpegArgs.splice(-2, 0, '-movflags', '+faststart'); // Web optimization for MOV/MP4
+    }
+    
+    // Special handling for WebM format
+    if (codecSettings.extension === 'webm') {
+      // Replace libx264 settings with VP9 for WebM
+      const presetIndex = ffmpegArgs.indexOf('-preset');
+      const crfIndex = ffmpegArgs.indexOf('-crf');
+      
+      if (presetIndex !== -1) {
+        ffmpegArgs.splice(presetIndex, 2); // Remove preset for VP9
+      }
+      if (crfIndex !== -1) {
+        ffmpegArgs[crfIndex + 1] = '30'; // VP9 CRF range is different
+      }
+    }
     
     console.log('🎬 Starting FFmpeg encoding with enhanced quality settings...');
     console.log('FFmpeg args:', ffmpegArgs.join(' '));
@@ -354,29 +437,36 @@ async function exportVideoWithFFmpeg(
     } catch (ffmpegError) {
       console.error('❌ Enhanced FFmpeg encoding failed:', ffmpegError);
       
-      // Try fallback with different settings if main encoding fails
-      console.log('🔄 Trying fallback FFmpeg encoding...');
+      // Try fallback with different settings but preserve format
+      console.log('🔄 Trying fallback FFmpeg encoding with original format...');
+      const fallbackOutputFileName = 'fallback_' + outputFileName;
       const fallbackArgs = [
         '-framerate', frameRate.toFixed(2),
         '-i', 'frame_%06d.png',
         '-i', originalVideoName,
-        '-c:v', 'libx264',
-        '-preset', 'medium',
-        '-crf', '23',             // Good quality
-        '-pix_fmt', 'yuv420p',
-        '-c:a', 'aac',
+        '-c:v', codecSettings.codec,        // Keep original codec
+        '-preset', 'medium',                // Faster preset
+        '-crf', '23',                       // Good quality
+        '-pix_fmt', codecSettings.pixelFormat,
+        '-c:a', codecSettings.audioCodec,  // Keep original audio codec
         '-b:a', '192k',
         '-map', '0:v:0',
         '-map', '1:a:0?',
         '-shortest',
+        '-f', codecSettings.ffmpegFormat,  // Keep original format
         '-y',
-        'fallback_' + outputFileName
+        fallbackOutputFileName
       ];
+      
+      // Add format-specific optimizations for fallback too
+      if (codecSettings.extension === 'mov' || codecSettings.extension === 'mp4') {
+        fallbackArgs.splice(-2, 0, '-movflags', '+faststart');
+      }
       
       try {
         await ffmpegInstance.exec(fallbackArgs);
         console.log('✅ Fallback encoding succeeded');
-        const fallbackData = await ffmpegInstance.readFile('fallback_' + outputFileName);
+        const fallbackData = await ffmpegInstance.readFile(fallbackOutputFileName);
         if (fallbackData && fallbackData.length > 0) {
           console.log(`✅ Fallback video created: ${fallbackData.length} bytes`);
           onProgress?.(100);

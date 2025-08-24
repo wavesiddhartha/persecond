@@ -74,11 +74,11 @@ const ExportControls = () => {
           } else if (progress < 75) {
             setExportStage('Writing high-quality frames...');
           } else if (progress < 85) {
-            setExportStage('Extracting and preserving audio...');
+            setExportStage(`Extracting audio from ${video.format.toUpperCase()} file...`);
           } else if (progress < 95) {
-            setExportStage('Encoding video with original quality...');
+            setExportStage(`Encoding ${video.format.toUpperCase()} with original quality...`);
           } else {
-            setExportStage('Finalizing high-quality export...');
+            setExportStage(`Finalizing ${video.format.toUpperCase()} export...`);
           }
         }
       );

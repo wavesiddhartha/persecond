@@ -11,7 +11,7 @@ interface AdvancedControlsProps {
 // Apple-style chevron component
 const ChevronIcon = ({ expanded }: { expanded: boolean }) => (
   <svg
-    className="control-chevron"
+    className={`control-chevron ${expanded ? 'expanded' : ''}`}
     fill="none"
     viewBox="0 0 24 24"
     stroke="currentColor"

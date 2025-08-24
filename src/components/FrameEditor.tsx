@@ -3,11 +3,10 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useVideoStore } from '@/store/videoStore';
 import { applyAdjustmentsGPU } from '@/utils/webglProcessor';
-import { VideoFrame } from '@/store/videoStore';
 import FrameNavigator from './FrameNavigator';
 
 const FrameEditor = () => {
-  const { frames, currentFrame, updateFrameAdjustments, video } = useVideoStore();
+  const { frames, currentFrame, video } = useVideoStore();
   const [previewImage, setPreviewImage] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -66,10 +65,6 @@ const FrameEditor = () => {
     return () => clearTimeout(timeoutId);
   }, [currentFrameData, updatePreview]);
 
-  const handleAdjustmentChange = useCallback((key: keyof VideoFrame['adjustments'], value: number) => {
-    if (currentFrame === null) return;
-    updateFrameAdjustments(currentFrame, { [key]: value });
-  }, [currentFrame, updateFrameAdjustments]);
 
   if (!currentFrameData) {
     return (

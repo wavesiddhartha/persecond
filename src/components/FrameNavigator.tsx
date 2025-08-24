@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useVideoStore } from '@/store/videoStore';
+import { useVideoStore, VideoFrame } from '@/store/videoStore';
 
 const FrameNavigator = () => {
   const { frames, currentFrame, setCurrentFrame, video } = useVideoStore();
@@ -150,7 +150,7 @@ const FrameNavigator = () => {
   };
 
   // Check if a frame has been edited (has non-default adjustments)
-  const isFrameEdited = (frame: any) => {
+  const isFrameEdited = (frame: VideoFrame) => {
     const defaultValues = {
       exposure: 0, brightness: 0, highlights: 0, shadows: 0, contrast: 0,
       brilliance: 0, blackPoint: 0, whitePoint: 0, saturation: 0, vibrance: 0,

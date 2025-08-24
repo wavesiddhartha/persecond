@@ -3,7 +3,6 @@
 import VideoUpload from '@/components/VideoUpload';
 import FrameEditor from '@/components/FrameEditor';
 import ExportControls from '@/components/ExportControls';
-import LivePreview from '@/components/LivePreview';
 import AdvancedControls from '@/components/AdvancedControls';
 import { useVideoStore } from '@/store/videoStore';
 

@@ -52,7 +52,7 @@ const VideoUpload = () => {
           }
         };
         
-        const handleReject = (error: any) => {
+        const handleReject = (error: unknown) => {
           if (!resolved) {
             resolved = true;
             cleanup();

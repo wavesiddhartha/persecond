@@ -22,7 +22,7 @@ async function initializeFFmpeg(): Promise<FFmpeg> {
 }
 
 // Get optimal codec settings for different formats
-function getCodecSettings(format: string, width: number, height: number) {
+function getCodecSettings(format: string) {
   const formatLower = format.toLowerCase();
   
   switch (formatLower) {
@@ -95,7 +95,7 @@ export async function exportVideo(
     onProgress?.(5);
     
     // Get codec settings for the original format
-    const codecSettings = getCodecSettings(videoInfo.format, videoInfo.width, videoInfo.height);
+    const codecSettings = getCodecSettings(videoInfo.format);
     onProgress?.(10);
     
     // Process all frames with their adjustments
@@ -193,7 +193,7 @@ export async function exportVideo(
       filesToClean.map(async (fileName) => {
         try {
           await ffmpegInstance.deleteFile(fileName);
-        } catch (e) {
+        } catch {
           // Ignore cleanup errors
         }
       })

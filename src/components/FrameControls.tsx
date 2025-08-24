@@ -4,11 +4,18 @@ import { VideoFrame } from '@/store/videoStore';
 
 interface FrameControlsProps {
   adjustments: VideoFrame['adjustments'];
-  onAdjustmentChange: (key: string, value: number) => void;
+  onAdjustmentChange: (key: keyof VideoFrame['adjustments'], value: number) => void;
 }
 
 const FrameControls = ({ adjustments, onAdjustmentChange }: FrameControlsProps) => {
-  const controls = [
+  const controls: Array<{
+    key: keyof VideoFrame['adjustments'];
+    label: string;
+    min: number;
+    max: number;
+    step: number;
+    icon: string;
+  }> = [
     {
       key: 'exposure',
       label: 'Exposure',
@@ -86,7 +93,7 @@ const FrameControls = ({ adjustments, onAdjustmentChange }: FrameControlsProps) 
                 {control.label}
               </label>
               <span className="text-sm text-[--text-secondary] min-w-[3ch] text-right">
-                {(adjustments as any)[control.key]}
+                {adjustments[control.key as keyof VideoFrame['adjustments']]}
               </span>
             </div>
             
@@ -96,8 +103,8 @@ const FrameControls = ({ adjustments, onAdjustmentChange }: FrameControlsProps) 
                 min={control.min}
                 max={control.max}
                 step={control.step}
-                value={(adjustments as any)[control.key]}
-                onChange={(e) => onAdjustmentChange(control.key, Number(e.target.value))}
+                value={adjustments[control.key as keyof VideoFrame['adjustments']]}
+                onChange={(e) => onAdjustmentChange(control.key as keyof VideoFrame['adjustments'], Number(e.target.value))}
                 className="w-full h-2 bg-[--bg-notebook] rounded-lg appearance-none cursor-pointer slider"
                 style={{
                   background: `linear-gradient(90deg, 

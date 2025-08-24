@@ -5,7 +5,7 @@ import { useVideoStore } from '@/store/videoStore';
 import { exportVideo, downloadVideo, getEstimatedExportTime } from '@/utils/videoExporter';
 
 // Generate preview of clean filename (same logic as in videoExporter)
-function generateCleanFilenamePreview(originalFileName: string, format: string): string {
+function generateCleanFilenamePreview(originalFileName: string): string {
   const sanitizeFilename = (filename: string): string => {
     return filename
       .replace(/[#@$%^&*()+=\[\]{}|\\:";'<>?,/]/g, '')
@@ -22,7 +22,7 @@ function generateCleanFilenamePreview(originalFileName: string, format: string):
   const finalBaseName = cleanBaseName || 'edited_video';
   const timestamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '_');
   
-  return `${finalBaseName}_${timestamp}.${format.toLowerCase()}`;
+  return `${finalBaseName}_${timestamp}.webm`;
 }
 
 const ExportControls = () => {
@@ -70,7 +70,7 @@ const ExportControls = () => {
 
       setExportStage('Download ready!');
       
-      // Download the video with original format
+      // Download the video
       downloadVideo(videoBlob, video.name, video.format);
       
       setTimeout(() => {
@@ -106,7 +106,7 @@ const ExportControls = () => {
   }
 
   const estimatedTime = getEstimatedExportTime(frames.length, video.width, video.height);
-  const previewFilename = generateCleanFilenamePreview(video.name, video.format);
+  const previewFilename = generateCleanFilenamePreview(video.name);
 
   return (
     <div>

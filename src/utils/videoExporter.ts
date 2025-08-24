@@ -3,6 +3,7 @@ import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { VideoFrame, VideoInfo } from '@/store/videoStore';
 import { applyAdjustmentsGPU } from './webglProcessor';
 import { exportVideoWithCanvas } from './canvasVideoExporter';
+import { exportVideoSimple } from './simpleVideoExporter';
 
 let ffmpeg: FFmpeg | null = null;
 
@@ -100,6 +101,15 @@ export async function exportVideo(
     }
   });
 
+  // Try simple/reliable export first
+  console.log('🚀 Attempting simple export method (most reliable)...');
+  try {
+    return await exportVideoSimple(frames, videoInfo, onProgress);
+  } catch (simpleError) {
+    console.warn('⚠️ Simple export failed, trying FFmpeg method:', simpleError);
+  }
+
+  // Fallback to FFmpeg method
   try {
     onProgress?.(0);
     
@@ -365,7 +375,7 @@ function sanitizeFilename(filename: string): string {
 }
 
 // Generate clean, professional filename
-function generateCleanFilename(originalFileName: string, format: string): string {
+function generateCleanFilename(originalFileName: string, format: string, mimeType?: string): string {
   // Remove extension from original name
   const baseName = originalFileName.replace(/\.[^/.]+$/, '');
   
@@ -378,8 +388,16 @@ function generateCleanFilename(originalFileName: string, format: string): string
   // Add timestamp to make filename unique
   const timestamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '_');
   
+  // Determine file extension based on mime type or format
+  let extension = format.toLowerCase();
+  if (mimeType) {
+    if (mimeType.includes('webm')) extension = 'webm';
+    else if (mimeType.includes('mp4')) extension = 'mp4';
+    else if (mimeType.includes('mov')) extension = 'mov';
+  }
+  
   // Generate final clean filename
-  return `${finalBaseName}_${timestamp}.${format.toLowerCase()}`;
+  return `${finalBaseName}_${timestamp}.${extension}`;
 }
 
 // Download the exported video with correct filename
@@ -388,7 +406,7 @@ export function downloadVideo(blob: Blob, originalFileName: string, format: stri
   const link = document.createElement('a');
   
   // Generate clean, safe filename
-  const fileName = generateCleanFilename(originalFileName, format);
+  const fileName = generateCleanFilename(originalFileName, format, blob.type);
   
   link.href = url;
   link.download = fileName;

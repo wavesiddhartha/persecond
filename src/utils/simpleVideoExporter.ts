@@ -96,8 +96,24 @@ export async function exportVideoSimple(
     
     onProgress?.(70);
     
-    // Create WebM video from frames
-    console.log(`🎬 Creating video from ${processedFrames.length} processed frames...`);
+    // Try advanced export with audio first, then fallback to simple
+    console.log(`🎬 Creating high-quality video from ${processedFrames.length} processed frames...`);
+    
+    try {
+      // First attempt: High-quality export with audio preservation
+      const videoBlob = await createHighQualityVideoWithAudio(processedFrames, videoInfo, onProgress);
+      
+      if (videoBlob && videoBlob.size > 0) {
+        onProgress?.(100);
+        console.log(`✅ High-quality export with audio completed: ${videoBlob.size} bytes (${(videoBlob.size / 1024 / 1024).toFixed(2)}MB)`);
+        return videoBlob;
+      }
+    } catch (audioExportError) {
+      console.warn('⚠️ High-quality export failed, trying basic export:', audioExportError);
+    }
+    
+    // Fallback: Basic WebM export
+    console.log(`🔄 Falling back to basic video export...`);
     const videoBlob = await createWebMFromFrames(processedFrames, videoInfo, onProgress);
     
     if (!videoBlob || videoBlob.size === 0) {
@@ -105,7 +121,7 @@ export async function exportVideoSimple(
     }
     
     onProgress?.(100);
-    console.log(`✅ Simple video export completed: ${videoBlob.size} bytes (${(videoBlob.size / 1024 / 1024).toFixed(2)}MB)`);
+    console.log(`✅ Basic video export completed: ${videoBlob.size} bytes (${(videoBlob.size / 1024 / 1024).toFixed(2)}MB)`);
     
     return videoBlob;
     
@@ -159,9 +175,9 @@ async function createWebMFromFrames(
         return;
       }
       
-      // Set canvas dimensions with validation
-      const width = Math.max(1, Math.min(4096, videoInfo.width));
-      const height = Math.max(1, Math.min(4096, videoInfo.height));
+      // MAINTAIN ORIGINAL RESOLUTION - No artificial limits for quality
+      const width = videoInfo.width;
+      const height = videoInfo.height;
       
       canvas.width = width;
       canvas.height = height;
@@ -352,7 +368,9 @@ async function createWebMFromFrames(
             const progress = 80 + (currentFrameIndex / frames.length) * 20; // 80-100%
             onProgress?.(progress);
             
-            setTimeout(drawFrame, Math.max(33, 1000 / targetFPS));
+            requestAnimationFrame(() => {
+              setTimeout(drawFrame, Math.max(16, 1000 / targetFPS));
+            });
             return;
           }
           
@@ -370,7 +388,9 @@ async function createWebMFromFrames(
               const progress = 80 + (currentFrameIndex / frames.length) * 20;
               onProgress?.(progress);
               
-              setTimeout(drawFrame, Math.max(33, 1000 / targetFPS));
+              requestAnimationFrame(() => {
+              setTimeout(drawFrame, Math.max(16, 1000 / targetFPS));
+            });
             }
           }, 5000); // 5 second timeout per frame
           
@@ -418,9 +438,10 @@ async function createWebMFromFrames(
             const progress = 80 + (currentFrameIndex / frames.length) * 20;
             onProgress?.(progress);
             
-            // Schedule next frame with proper timing
-            const frameDelay = Math.max(33, 1000 / targetFPS); // At least 30fps max
-            setTimeout(drawFrame, frameDelay);
+            // Use requestAnimationFrame for smoother performance
+            requestAnimationFrame(() => {
+              setTimeout(drawFrame, Math.max(16, 1000 / targetFPS));
+            });
           };
           
           img.onerror = () => {
@@ -436,7 +457,9 @@ async function createWebMFromFrames(
             const progress = 80 + (currentFrameIndex / frames.length) * 20;
             onProgress?.(progress);
             
-            setTimeout(drawFrame, Math.max(33, 1000 / targetFPS));
+            requestAnimationFrame(() => {
+              setTimeout(drawFrame, Math.max(16, 1000 / targetFPS));
+            });
           };
           
           img.src = frameData;
@@ -461,6 +484,294 @@ async function createWebMFromFrames(
       
     } catch (setupError) {
       reject(new Error(`Setup failed: ${setupError instanceof Error ? setupError.message : 'Unknown error'}`));
+    }
+  });
+}
+
+// High-quality video export with audio preservation and original resolution
+async function createHighQualityVideoWithAudio(
+  frames: string[],
+  videoInfo: VideoInfo,
+  onProgress?: (progress: number) => void
+): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    try {
+      console.log(`🎵 Starting high-quality export with audio preservation...`);
+      
+      // Create two canvases - one for video frames, one for compositing
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d', { 
+        alpha: false, 
+        willReadFrequently: false
+      }) as CanvasRenderingContext2D | null;
+      
+      if (!ctx) {
+        reject(new Error('Cannot create high-performance canvas context'));
+        return;
+      }
+      
+      // MAINTAIN ORIGINAL RESOLUTION - No downscaling for 4K/8K
+      const width = videoInfo.width;  // Keep original width
+      const height = videoInfo.height; // Keep original height
+      
+      canvas.width = width;
+      canvas.height = height;
+      
+      console.log(`🎯 Maintaining original resolution: ${width}x${height}`);
+      
+      // Create video element to extract audio from original video
+      const videoElement = document.createElement('video');
+      videoElement.crossOrigin = 'anonymous';
+      videoElement.muted = false; // Ensure audio is not muted
+      
+      let audioContext: AudioContext | null = null;
+      let sourceNode: MediaElementAudioSourceNode | null = null;
+      let destinationStream: MediaStream | null = null;
+      
+      // Setup audio processing
+      try {
+        const AudioContextClass = window.AudioContext || (window as typeof window & {webkitAudioContext: typeof AudioContext}).webkitAudioContext;
+        audioContext = new AudioContextClass();
+        sourceNode = audioContext.createMediaElementSource(videoElement);
+        const destination = audioContext.createMediaStreamDestination();
+        sourceNode.connect(destination);
+        sourceNode.connect(audioContext.destination); // Also play through speakers
+        destinationStream = destination.stream;
+        
+        console.log('🎵 Audio context and routing established');
+      } catch (audioSetupError) {
+        console.warn('⚠️ Audio setup failed, proceeding video-only:', audioSetupError);
+      }
+      
+      // Setup canvas stream with higher quality
+      const targetFPS = Math.min(60, Math.max(24, videoInfo.fps || 30)); // Support up to 60fps
+      const canvasStream = canvas.captureStream(targetFPS);
+      
+      // Combine video and audio streams
+      let combinedStream: MediaStream;
+      if (destinationStream && destinationStream.getAudioTracks().length > 0) {
+        combinedStream = new MediaStream([
+          ...canvasStream.getVideoTracks(),
+          ...destinationStream.getAudioTracks()
+        ]);
+        console.log('✅ Combined video + audio stream created');
+      } else {
+        combinedStream = canvasStream;
+        console.log('⚠️ Video-only stream (no audio available)');
+      }
+      
+      // Enhanced codec selection for higher quality
+      const highQualityCodecs = [
+        'video/webm;codecs=vp9,opus',     // VP9 with Opus audio
+        'video/webm;codecs=vp8,opus',     // VP8 with Opus audio
+        'video/webm;codecs=h264,opus',    // H264 with Opus audio
+        'video/mp4;codecs=h264,aac',      // H264 with AAC audio
+        'video/webm;codecs=vp9',          // VP9 video only
+        'video/webm;codecs=vp8',          // VP8 video only
+        'video/webm'                      // Basic WebM
+      ];
+      
+      let selectedCodec = '';
+      for (const codec of highQualityCodecs) {
+        try {
+          if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(codec)) {
+            selectedCodec = codec;
+            console.log(`🎥 Selected high-quality codec: ${codec}`);
+            break;
+          }
+        } catch (codecError) {
+          console.warn(`Codec check failed for ${codec}:`, codecError);
+        }
+      }
+      
+      if (!selectedCodec) {
+        selectedCodec = 'video/webm';
+        console.warn('⚠️ Using fallback codec: video/webm');
+      }
+      
+      // Calculate high-quality bitrate based on resolution
+      const pixelCount = width * height;
+      let videoBitrate = 8000000; // Default 8 Mbps
+      let audioBitrate = 256000;  // 256 kbps audio
+      
+      if (pixelCount >= 3840 * 2160) {      // 4K+
+        videoBitrate = 45000000;  // 45 Mbps for 4K
+        audioBitrate = 320000;    // 320 kbps audio
+      } else if (pixelCount >= 2560 * 1440) { // 1440p
+        videoBitrate = 16000000;  // 16 Mbps for 1440p
+        audioBitrate = 256000;
+      } else if (pixelCount >= 1920 * 1080) { // 1080p
+        videoBitrate = 8000000;   // 8 Mbps for 1080p
+        audioBitrate = 192000;
+      }
+      
+      console.log(`🎯 Quality settings: ${videoBitrate / 1000000}Mbps video, ${audioBitrate / 1000}kbps audio`);
+      
+      // Create MediaRecorder with high-quality settings
+      const mediaRecorder = new MediaRecorder(combinedStream, {
+        mimeType: selectedCodec,
+        videoBitsPerSecond: videoBitrate,
+        audioBitsPerSecond: audioBitrate
+      });
+      
+      const chunks: Blob[] = [];
+      let currentFrameIndex = 0;
+      let hasReceivedData = false;
+      
+      // Load original video for audio timing
+      const loadVideo = new Promise<void>((videoResolve) => {
+        videoElement.onloadedmetadata = () => {
+          console.log(`📹 Original video loaded: ${videoElement.duration}s duration`);
+          videoResolve();
+        };
+        
+        videoElement.onerror = () => {
+          console.warn('⚠️ Could not load original video for audio');
+          videoResolve(); // Continue without audio
+        };
+        
+        // Convert File to blob URL for video element
+        if (videoInfo.file) {
+          const videoURL = URL.createObjectURL(videoInfo.file);
+          videoElement.src = videoURL;
+        } else {
+          console.warn('⚠️ No original video file available');
+          videoResolve();
+        }
+        
+        // Timeout for video loading
+        setTimeout(() => {
+          console.warn('⚠️ Video loading timeout, continuing without audio');
+          videoResolve();
+        }, 5000);
+      });
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          chunks.push(event.data);
+          hasReceivedData = true;
+          console.log(`📊 High-quality chunk: ${event.data.size} bytes (total: ${chunks.length})`);
+        }
+      };
+      
+      mediaRecorder.onstop = () => {
+        // Cleanup
+        if (audioContext) {
+          audioContext.close();
+        }
+        if (videoElement.src) {
+          URL.revokeObjectURL(videoElement.src);
+        }
+        
+        if (chunks.length === 0 || !hasReceivedData) {
+          reject(new Error('No high-quality video data was recorded'));
+          return;
+        }
+        
+        const totalSize = chunks.reduce((sum, chunk) => sum + chunk.size, 0);
+        console.log(`✅ High-quality recording complete: ${chunks.length} chunks, ${totalSize} bytes total`);
+        
+        const videoBlob = new Blob(chunks, { type: selectedCodec.split(';')[0] });
+        resolve(videoBlob);
+      };
+      
+      mediaRecorder.onerror = (event) => {
+        console.error('High-quality MediaRecorder error:', event);
+        const errorMessage = event instanceof ErrorEvent && event.error?.message 
+          ? event.error.message 
+          : 'High-quality recording failed';
+        reject(new Error(`High-quality export error: ${errorMessage}`));
+      };
+      
+      // Wait for video to load, then start recording
+      loadVideo.then(() => {
+        try {
+          mediaRecorder.start(100); // Higher frequency data collection for quality
+          console.log('🎬 High-quality recording started with audio');
+          
+          // Start playing original video for audio synchronization
+          if (videoElement.src && audioContext) {
+            videoElement.currentTime = 0;
+            videoElement.play().catch(err => console.warn('Video play failed:', err));
+          }
+          
+          // Start frame rendering with optimized timing
+          renderHighQualityFrames();
+          
+        } catch (startError) {
+          reject(new Error(`Failed to start high-quality recording: ${startError instanceof Error ? startError.message : 'Unknown error'}`));
+        }
+      });
+      
+      // Optimized frame rendering function
+      const renderHighQualityFrames = () => {
+        const frameDuration = 1000 / targetFPS;
+        let lastFrameTime = 0;
+        
+        const drawFrame = (currentTime: number) => {
+          if (currentFrameIndex >= frames.length) {
+            // Finished all frames
+            console.log(`🎬 All ${frames.length} high-quality frames processed`);
+            setTimeout(() => {
+              if (mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+              }
+            }, 500);
+            return;
+          }
+          
+          // Throttle frame rate to prevent lag
+          if (currentTime - lastFrameTime >= frameDuration) {
+            const frameData = frames[currentFrameIndex];
+            
+            if (frameData && frameData.startsWith('data:image/')) {
+              const img = new Image();
+              img.onload = () => {
+                try {
+                  // Clear and draw frame maintaining aspect ratio
+                  ctx.fillStyle = '#000000';
+                  ctx.fillRect(0, 0, canvas.width, canvas.height);
+                  
+                  // Draw image at full resolution
+                  ctx.drawImage(img, 0, 0, width, height);
+                  
+                  if (currentFrameIndex === 0) {
+                    console.log(`✅ First high-quality frame rendered at ${width}x${height}`);
+                  }
+                  
+                } catch (drawError) {
+                  console.error(`❌ Error drawing high-quality frame ${currentFrameIndex}:`, drawError);
+                }
+              };
+              img.src = frameData;
+            }
+            
+            currentFrameIndex++;
+            const progress = 80 + (currentFrameIndex / frames.length) * 20;
+            onProgress?.(progress);
+            
+            lastFrameTime = currentTime;
+          }
+          
+          // Continue rendering
+          if (currentFrameIndex < frames.length) {
+            requestAnimationFrame(drawFrame);
+          }
+        };
+        
+        requestAnimationFrame(drawFrame);
+      };
+      
+      // Safety timeout for high-quality export
+      setTimeout(() => {
+        if (mediaRecorder.state === 'recording') {
+          console.warn('⚠️ High-quality export timeout, stopping...');
+          mediaRecorder.stop();
+        }
+      }, Math.max(60000, frames.length * 500)); // More time for high-quality processing
+      
+    } catch (setupError) {
+      reject(new Error(`High-quality setup failed: ${setupError instanceof Error ? setupError.message : 'Unknown error'}`));
     }
   });
 }

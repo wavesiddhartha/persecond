@@ -64,17 +64,21 @@ const ExportControls = () => {
         (progress) => {
           setExportProgress(progress);
           
-          // Update stage based on progress with more detailed info
-          if (progress < 10) {
+          // Update stage based on progress with FFmpeg-specific info
+          if (progress < 5) {
             setExportStage('Starting export...');
-          } else if (progress < 70) {
+          } else if (progress < 10) {
+            setExportStage('Loading FFmpeg for high-quality export...');
+          } else if (progress < 55) {
             setExportStage('Processing frames with adjustments...');
-          } else if (progress < 80) {
-            setExportStage('Creating video...');
+          } else if (progress < 75) {
+            setExportStage('Writing high-quality frames...');
+          } else if (progress < 85) {
+            setExportStage('Extracting and preserving audio...');
           } else if (progress < 95) {
-            setExportStage('Recording video...');
+            setExportStage('Encoding video with original quality...');
           } else {
-            setExportStage('Finalizing export...');
+            setExportStage('Finalizing high-quality export...');
           }
         }
       );

@@ -2,7 +2,6 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { VideoFrame, VideoInfo } from '@/store/videoStore';
 import { applyAdjustmentsGPU } from './webglProcessor';
-import { exportVideoWithCanvas } from './canvasVideoExporter';
 import { exportVideoSimple } from './simpleVideoExporter';
 
 let ffmpeg: FFmpeg | null = null;
@@ -101,263 +100,19 @@ export async function exportVideo(
     }
   });
 
-  // Try simple/reliable export first
-  console.log('🚀 Attempting simple export method (most reliable)...');
+  // Try FFmpeg export first for best quality and audio preservation
+  console.log('🚀 Attempting FFmpeg export for maximum quality and audio...');
   try {
-    return await exportVideoSimple(frames, videoInfo, onProgress);
-  } catch (simpleError) {
-    console.warn('⚠️ Simple export failed, trying FFmpeg method:', simpleError);
-  }
-
-  // Fallback to FFmpeg method
-  try {
-    onProgress?.(0);
-    
-    // Validate inputs
-    if (!frames || frames.length === 0) {
-      throw new Error('No frames provided for export');
-    }
-    
-    if (!videoInfo || !videoInfo.file) {
-      throw new Error('No video information or file provided');
-    }
-    
-    // Initialize FFmpeg
-    console.log('🔧 Initializing FFmpeg...');
-    const ffmpegInstance = await initializeFFmpeg();
-    onProgress?.(5);
-    
-    // Get codec settings for the original format
-    const codecSettings = getCodecSettings(videoInfo.format);
-    onProgress?.(10);
-    
-    // Process all frames with their adjustments
-    console.log('🎨 Processing frames with adjustments...');
-    const processedFrames: string[] = [];
-    const totalFrames = frames.length;
-    
-    for (let i = 0; i < totalFrames; i++) {
-      const frame = frames[i];
-      
-      try {
-        // Apply adjustments to each frame individually using WebGL
-        const processedImageData = await applyAdjustmentsGPU(
-          frame.imageData,
-          frame.adjustments
-        );
-        
-        // Validate processed frame data
-        if (!processedImageData || !processedImageData.startsWith('data:image/')) {
-          throw new Error(`Invalid processed frame data for frame ${i}`);
-        }
-        
-        processedFrames.push(processedImageData);
-        
-        if (i === 0) {
-          console.log('✅ First frame processed successfully');
-        }
-      } catch (frameError) {
-        console.error(`❌ Error processing frame ${i}:`, frameError);
-        // Use original frame data as fallback
-        processedFrames.push(frame.imageData);
-      }
-      
-      const frameProgress = 10 + ((i + 1) / totalFrames) * 50; // 10-60%
-      onProgress?.(frameProgress);
-    }
-    
-    console.log(`✅ Processed ${processedFrames.length} frames successfully`);
-    
-    onProgress?.(65);
-    
-    // Write processed frames to FFmpeg filesystem
-    console.log('📝 Writing frames to FFmpeg filesystem...');
-    for (let i = 0; i < processedFrames.length; i++) {
-      try {
-        const imageBlob = base64ToBlob(processedFrames[i]);
-        const fileName = `frame_${String(i + 1).padStart(6, '0')}.jpg`;
-        
-        if (imageBlob.size === 0) {
-          throw new Error(`Frame ${i} resulted in zero-size blob`);
-        }
-        
-        await ffmpegInstance.writeFile(fileName, await fetchFile(imageBlob));
-        
-        if (i === 0) {
-          console.log(`✅ First frame written: ${fileName} (${imageBlob.size} bytes)`);
-        }
-      } catch (writeError) {
-        console.error(`❌ Error writing frame ${i}:`, writeError);
-        throw new Error(`Failed to write frame ${i}: ${writeError instanceof Error ? writeError.message : 'Unknown error'}`);
-      }
-      
-      const writeProgress = 65 + ((i + 1) / processedFrames.length) * 15; // 65-80%
-      onProgress?.(writeProgress);
-    }
-    
-    console.log(`✅ Written ${processedFrames.length} frames to FFmpeg filesystem`);
-    
-    onProgress?.(80);
-    
-    // Use original video's framerate to preserve playback speed
-    // Calculate actual framerate from frame timestamps for more accuracy
-    let frameRate = videoInfo.fps || 30;
-    
-    if (frames.length > 1) {
-      const firstTimestamp = frames[0].timestamp;
-      const lastTimestamp = frames[frames.length - 1].timestamp;
-      const duration = lastTimestamp - firstTimestamp;
-      
-      if (duration > 0) {
-        const calculatedFrameRate = (frames.length - 1) / duration;
-        frameRate = calculatedFrameRate;
-      }
-    }
-    
-    // Ensure framerate is within reasonable bounds
-    frameRate = Math.max(1, Math.min(60, frameRate));
-    
-    console.log(`🎬 Video framerate: ${frameRate.toFixed(2)} fps`);
-    
-    // Try simple video-only export first (more reliable)
-    const outputFileName = `output.${codecSettings.extension}`;
-    
-    // Simplified FFmpeg command for better compatibility
-    let ffmpegArgs = [
-      '-framerate', frameRate.toFixed(2),
-      '-i', 'frame_%06d.jpg',
-      '-c:v', 'libx264',
-      '-pix_fmt', 'yuv420p',
-      '-crf', '23', // Good quality balance
-      '-preset', 'fast', // Faster encoding
-      '-movflags', '+faststart', // Web optimization
-      '-y', // Overwrite output
-      outputFileName
-    ];
-    
-    // Try with audio if original video exists and has audio
-    let includeAudio = false;
+    return await exportVideoWithFFmpeg(frames, videoInfo, onProgress);
+  } catch (ffmpegError) {
+    console.warn('⚠️ FFmpeg export failed, trying simple method:', ffmpegError);
+    // Fallback to simple export
     try {
-      const originalVideoName = 'original_video.mp4';
-      await ffmpegInstance.writeFile(originalVideoName, await fetchFile(videoInfo.file));
-      
-      // Check if original has audio (this might fail, which is okay)
-      includeAudio = true;
-      console.log('✅ Original video loaded for audio extraction');
-      
-      // Update command to include audio
-      ffmpegArgs = [
-        '-framerate', frameRate.toFixed(2),
-        '-i', 'frame_%06d.jpg',
-        '-i', originalVideoName,
-        '-c:v', 'libx264',
-        '-c:a', 'aac',
-        '-pix_fmt', 'yuv420p',
-        '-crf', '23',
-        '-preset', 'fast',
-        '-movflags', '+faststart',
-        '-map', '0:v:0', // Video from frames
-        '-map', '1:a:0?', // Audio from original (optional)
-        '-shortest',
-        '-y',
-        outputFileName
-      ];
-    } catch (audioError) {
-      console.warn('⚠️ Could not load original video for audio, proceeding video-only:', audioError);
-      includeAudio = false;
+      return await exportVideoSimple(frames, videoInfo, onProgress);
+    } catch {
+      console.error('❌ Both export methods failed');
+      throw ffmpegError; // Throw the original FFmpeg error for better debugging
     }
-    
-    onProgress?.(87);
-    
-    // Execute FFmpeg encoding
-    console.log('🎬 Starting FFmpeg encoding with args:', ffmpegArgs);
-    
-    // Add logging callback to monitor FFmpeg output
-    ffmpegInstance.on('log', ({ message }) => {
-      console.log('FFmpeg:', message);
-    });
-    
-    try {
-      await ffmpegInstance.exec(ffmpegArgs);
-      console.log('✅ FFmpeg encoding completed successfully');
-    } catch (ffmpegError) {
-      console.error('❌ First FFmpeg encoding attempt failed:', ffmpegError);
-      
-      // Try fallback: ultra-simple video-only export
-      console.log('🔄 Trying fallback: simple video-only export...');
-      const fallbackArgs = [
-        '-framerate', '30', // Fixed framerate
-        '-i', 'frame_%06d.jpg',
-        '-c:v', 'libx264',
-        '-pix_fmt', 'yuv420p',
-        '-y',
-        'fallback_output.mp4'
-      ];
-      
-      try {
-        await ffmpegInstance.exec(fallbackArgs);
-        console.log('✅ Fallback encoding succeeded');
-        // Use fallback output
-        const fallbackData = await ffmpegInstance.readFile('fallback_output.mp4');
-        if (fallbackData && fallbackData.length > 0) {
-          console.log(`✅ Fallback video created: ${fallbackData.length} bytes`);
-          onProgress?.(100);
-          return new Blob([fallbackData as BlobPart], { type: 'video/mp4' });
-        }
-      } catch (fallbackError) {
-        console.error('❌ Fallback encoding also failed:', fallbackError);
-      }
-      
-      // Final fallback: Canvas-based export
-      console.log('🎨 Trying final fallback: Canvas-based video export...');
-      try {
-        return await exportVideoWithCanvas(frames, videoInfo, onProgress);
-      } catch (canvasError) {
-        console.error('❌ Canvas fallback also failed:', canvasError);
-        throw new Error(`All export methods failed. FFmpeg error: ${ffmpegError instanceof Error ? ffmpegError.message : 'Unknown error'}`);
-      }
-    }
-    
-    onProgress?.(95);
-    
-    // Read the output file
-    console.log('📖 Reading output file...');
-    const outputData = await ffmpegInstance.readFile(outputFileName);
-    
-    if (!outputData || outputData.length === 0) {
-      throw new Error('Output video file is empty - encoding may have failed');
-    }
-    
-    console.log(`✅ Output video file read successfully: ${outputData.length} bytes`);
-    onProgress?.(98);
-    
-    // Clean up temporary files
-    const filesToClean = [outputFileName];
-    if (includeAudio) {
-      filesToClean.push('original_video.mp4');
-    }
-    for (let i = 1; i <= processedFrames.length; i++) {
-      filesToClean.push(`frame_${String(i).padStart(6, '0')}.jpg`);
-    }
-    
-    await Promise.all(
-      filesToClean.map(async (fileName) => {
-        try {
-          await ffmpegInstance.deleteFile(fileName);
-        } catch {
-          // Ignore cleanup errors
-        }
-      })
-    );
-    
-    onProgress?.(100);
-    
-    // Return the video blob with correct MIME type
-    return new Blob([outputData as BlobPart], { type: codecSettings.mimeType });
-    
-  } catch (error) {
-    console.error('Video export failed:', error);
-    throw new Error(`Failed to export video: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
@@ -435,5 +190,243 @@ export function getEstimatedExportTime(frameCount: number, width: number, height
   } else {
     const minutes = Math.round(estimatedSeconds / 60);
     return `~${minutes} minute${minutes > 1 ? 's' : ''}`;
+  }
+}
+
+// Enhanced FFmpeg export with perfect quality and audio preservation
+async function exportVideoWithFFmpeg(
+  frames: VideoFrame[],
+  videoInfo: VideoInfo,
+  onProgress?: (progress: number) => void
+): Promise<Blob> {
+  console.log('🎬 Starting enhanced FFmpeg export with audio preservation...');
+  
+  try {
+    // Validate inputs
+    if (!frames || frames.length === 0) {
+      throw new Error('No frames provided for export');
+    }
+    
+    if (!videoInfo || !videoInfo.file) {
+      throw new Error('No video information or file provided');
+    }
+    
+    onProgress?.(0);
+    
+    // Initialize FFmpeg
+    console.log('🔧 Initializing FFmpeg...');
+    const ffmpegInstance = await initializeFFmpeg();
+    onProgress?.(5);
+    
+    // Get codec settings for the original format to maintain quality
+    const codecSettings = getCodecSettings(videoInfo.format);
+    onProgress?.(10);
+    
+    // Process all frames with their adjustments
+    console.log('🎨 Processing frames with adjustments...');
+    const processedFrames: string[] = [];
+    const totalFrames = frames.length;
+    
+    for (let i = 0; i < totalFrames; i++) {
+      const frame = frames[i];
+      
+      try {
+        // Apply adjustments to each frame using WebGL
+        const processedImageData = await applyAdjustmentsGPU(
+          frame.imageData,
+          frame.adjustments
+        );
+        
+        // Validate processed frame data
+        if (!processedImageData || !processedImageData.startsWith('data:image/')) {
+          throw new Error(`Invalid processed frame data for frame ${i}`);
+        }
+        
+        processedFrames.push(processedImageData);
+        
+        if (i === 0) {
+          console.log('✅ First frame processed successfully');
+        }
+      } catch (frameError) {
+        console.error(`❌ Error processing frame ${i}:`, frameError);
+        // Use original frame data as fallback
+        processedFrames.push(frame.imageData);
+      }
+      
+      const frameProgress = 10 + ((i + 1) / totalFrames) * 40; // 10-50%
+      onProgress?.(frameProgress);
+    }
+    
+    console.log(`✅ Processed ${processedFrames.length} frames successfully`);
+    onProgress?.(55);
+    
+    // Write processed frames to FFmpeg filesystem with original quality
+    console.log('📝 Writing high-quality frames to FFmpeg filesystem...');
+    for (let i = 0; i < processedFrames.length; i++) {
+      try {
+        const imageBlob = base64ToBlob(processedFrames[i]);
+        const fileName = `frame_${String(i + 1).padStart(6, '0')}.png`; // Use PNG for lossless quality
+        
+        if (imageBlob.size === 0) {
+          throw new Error(`Frame ${i} resulted in zero-size blob`);
+        }
+        
+        await ffmpegInstance.writeFile(fileName, await fetchFile(imageBlob));
+        
+        if (i === 0) {
+          console.log(`✅ First frame written: ${fileName} (${imageBlob.size} bytes)`);
+        }
+      } catch (writeError) {
+        console.error(`❌ Error writing frame ${i}:`, writeError);
+        throw new Error(`Failed to write frame ${i}: ${writeError instanceof Error ? writeError.message : 'Unknown error'}`);
+      }
+      
+      const writeProgress = 55 + ((i + 1) / processedFrames.length) * 15; // 55-70%
+      onProgress?.(writeProgress);
+    }
+    
+    console.log(`✅ Written ${processedFrames.length} frames to FFmpeg filesystem`);
+    onProgress?.(75);
+    
+    // Calculate framerate from frame timestamps for accuracy
+    let frameRate = videoInfo.fps || 30;
+    
+    if (frames.length > 1) {
+      const firstTimestamp = frames[0].timestamp;
+      const lastTimestamp = frames[frames.length - 1].timestamp;
+      const duration = lastTimestamp - firstTimestamp;
+      
+      if (duration > 0) {
+        const calculatedFrameRate = (frames.length - 1) / duration;
+        frameRate = calculatedFrameRate;
+      }
+    }
+    
+    // Ensure framerate is within reasonable bounds
+    frameRate = Math.max(1, Math.min(60, frameRate));
+    
+    console.log(`🎬 Using framerate: ${frameRate.toFixed(2)} fps`);
+    
+    // Write original video for audio extraction
+    const originalVideoName = 'original_video.' + (videoInfo.format.toLowerCase());
+    await ffmpegInstance.writeFile(originalVideoName, await fetchFile(videoInfo.file));
+    console.log('✅ Original video loaded for audio extraction');
+    
+    onProgress?.(80);
+    
+    // Generate output filename with original format
+    const outputFileName = `output.${codecSettings.extension}`;
+    
+    // Enhanced FFmpeg command with lossless/high-quality settings
+    const ffmpegArgs = [
+      '-framerate', frameRate.toFixed(3),
+      '-i', 'frame_%06d.png',      // Use PNG input for lossless quality
+      '-i', originalVideoName,      // Original video for audio
+      '-c:v', 'libx264',           // Video codec
+      '-preset', 'slow',           // Best quality preset
+      '-crf', '18',                // Near-lossless quality (18 is visually lossless)
+      '-pix_fmt', 'yuv420p',       // Compatible pixel format
+      '-c:a', 'aac',               // Audio codec
+      '-b:a', '320k',              // High-quality audio bitrate
+      '-ar', '48000',              // High audio sample rate
+      '-ac', '2',                  // Stereo audio
+      '-map', '0:v:0',             // Video from processed frames
+      '-map', '1:a:0?',            // Audio from original video (optional)
+      '-shortest',                 // Match shortest stream duration
+      '-movflags', '+faststart',   // Web optimization
+      '-y',                        // Overwrite output
+      outputFileName
+    ];
+    
+    console.log('🎬 Starting FFmpeg encoding with enhanced quality settings...');
+    console.log('FFmpeg args:', ffmpegArgs.join(' '));
+    
+    // Add logging callback to monitor FFmpeg output
+    ffmpegInstance.on('log', ({ message }) => {
+      console.log('FFmpeg:', message);
+    });
+    
+    onProgress?.(85);
+    
+    try {
+      await ffmpegInstance.exec(ffmpegArgs);
+      console.log('✅ Enhanced FFmpeg encoding completed successfully');
+    } catch (ffmpegError) {
+      console.error('❌ Enhanced FFmpeg encoding failed:', ffmpegError);
+      
+      // Try fallback with different settings if main encoding fails
+      console.log('🔄 Trying fallback FFmpeg encoding...');
+      const fallbackArgs = [
+        '-framerate', frameRate.toFixed(2),
+        '-i', 'frame_%06d.png',
+        '-i', originalVideoName,
+        '-c:v', 'libx264',
+        '-preset', 'medium',
+        '-crf', '23',             // Good quality
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-map', '0:v:0',
+        '-map', '1:a:0?',
+        '-shortest',
+        '-y',
+        'fallback_' + outputFileName
+      ];
+      
+      try {
+        await ffmpegInstance.exec(fallbackArgs);
+        console.log('✅ Fallback encoding succeeded');
+        const fallbackData = await ffmpegInstance.readFile('fallback_' + outputFileName);
+        if (fallbackData && fallbackData.length > 0) {
+          console.log(`✅ Fallback video created: ${fallbackData.length} bytes`);
+          onProgress?.(100);
+          return new Blob([fallbackData as BlobPart], { type: codecSettings.mimeType });
+        }
+      } catch (fallbackError) {
+        console.error('❌ Fallback encoding also failed:', fallbackError);
+        throw new Error(`FFmpeg encoding failed: ${ffmpegError instanceof Error ? ffmpegError.message : 'Unknown error'}`);
+      }
+    }
+    
+    onProgress?.(95);
+    
+    // Read the output file
+    console.log('📖 Reading enhanced output file...');
+    const outputData = await ffmpegInstance.readFile(outputFileName);
+    
+    if (!outputData || outputData.length === 0) {
+      throw new Error('Output video file is empty - enhanced encoding may have failed');
+    }
+    
+    console.log(`✅ Enhanced output video file read successfully: ${outputData.length} bytes`);
+    onProgress?.(98);
+    
+    // Clean up temporary files
+    const filesToClean = [outputFileName, originalVideoName];
+    for (let i = 1; i <= processedFrames.length; i++) {
+      filesToClean.push(`frame_${String(i).padStart(6, '0')}.png`);
+    }
+    
+    await Promise.all(
+      filesToClean.map(async (fileName) => {
+        try {
+          await ffmpegInstance.deleteFile(fileName);
+        } catch {
+          // Ignore cleanup errors
+        }
+      })
+    );
+    
+    onProgress?.(100);
+    
+    // Return the video blob with correct MIME type
+    const finalBlob = new Blob([outputData as BlobPart], { type: codecSettings.mimeType });
+    console.log(`✅ Enhanced FFmpeg export completed: ${finalBlob.size} bytes (${(finalBlob.size / 1024 / 1024).toFixed(2)}MB)`);
+    
+    return finalBlob;
+    
+  } catch (error) {
+    console.error('❌ Enhanced FFmpeg video export failed:', error);
+    throw new Error(`Enhanced FFmpeg export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }

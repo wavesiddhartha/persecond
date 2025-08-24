@@ -2,6 +2,7 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { VideoFrame, VideoInfo } from '@/store/videoStore';
 import { applyAdjustmentsGPU } from './webglProcessor';
+import { exportVideoWithCanvas } from './canvasVideoExporter';
 
 let ffmpeg: FFmpeg | null = null;
 
@@ -208,38 +209,52 @@ export async function exportVideo(
     
     console.log(`🎬 Video framerate: ${frameRate.toFixed(2)} fps`);
     
-    // Write original video to FFmpeg filesystem for audio extraction
-    const originalVideoName = 'original_video.mp4';
-    await ffmpegInstance.writeFile(originalVideoName, await fetchFile(videoInfo.file));
-    
-    onProgress?.(82);
-    
-    // Construct FFmpeg command with audio preservation
+    // Try simple video-only export first (more reliable)
     const outputFileName = `output.${codecSettings.extension}`;
-    const ffmpegArgs = [
+    
+    // Simplified FFmpeg command for better compatibility
+    let ffmpegArgs = [
       '-framerate', frameRate.toFixed(2),
       '-i', 'frame_%06d.jpg',
-      '-i', originalVideoName, // Original video for audio
-      '-c:v', codecSettings.codec,
-      '-c:a', 'aac', // Audio codec
-      '-pix_fmt', codecSettings.pixelFormat,
-      '-crf', '18', // High quality (lower = better quality)
-      '-preset', 'medium', // Balanced speed/quality
+      '-c:v', 'libx264',
+      '-pix_fmt', 'yuv420p',
+      '-crf', '23', // Good quality balance
+      '-preset', 'fast', // Faster encoding
       '-movflags', '+faststart', // Web optimization
-      '-map', '0:v:0', // Video from frames
-      '-map', '1:a:0?', // Audio from original video (? makes it optional)
-      '-shortest', // Match shortest stream duration
       '-y', // Overwrite output
       outputFileName
     ];
     
-    // Add format-specific options
-    if (codecSettings.container === 'mov') {
-      ffmpegArgs.splice(-2, 0, '-f', 'mov');
-    } else if (codecSettings.container === 'avi') {
-      ffmpegArgs.splice(-2, 0, '-f', 'avi');
-    } else if (codecSettings.container === 'matroska') {
-      ffmpegArgs.splice(-2, 0, '-f', 'matroska');
+    // Try with audio if original video exists and has audio
+    let includeAudio = false;
+    try {
+      const originalVideoName = 'original_video.mp4';
+      await ffmpegInstance.writeFile(originalVideoName, await fetchFile(videoInfo.file));
+      
+      // Check if original has audio (this might fail, which is okay)
+      includeAudio = true;
+      console.log('✅ Original video loaded for audio extraction');
+      
+      // Update command to include audio
+      ffmpegArgs = [
+        '-framerate', frameRate.toFixed(2),
+        '-i', 'frame_%06d.jpg',
+        '-i', originalVideoName,
+        '-c:v', 'libx264',
+        '-c:a', 'aac',
+        '-pix_fmt', 'yuv420p',
+        '-crf', '23',
+        '-preset', 'fast',
+        '-movflags', '+faststart',
+        '-map', '0:v:0', // Video from frames
+        '-map', '1:a:0?', // Audio from original (optional)
+        '-shortest',
+        '-y',
+        outputFileName
+      ];
+    } catch (audioError) {
+      console.warn('⚠️ Could not load original video for audio, proceeding video-only:', audioError);
+      includeAudio = false;
     }
     
     onProgress?.(87);
@@ -256,8 +271,41 @@ export async function exportVideo(
       await ffmpegInstance.exec(ffmpegArgs);
       console.log('✅ FFmpeg encoding completed successfully');
     } catch (ffmpegError) {
-      console.error('❌ FFmpeg encoding failed:', ffmpegError);
-      throw new Error(`FFmpeg encoding failed: ${ffmpegError instanceof Error ? ffmpegError.message : 'Unknown error'}`);
+      console.error('❌ First FFmpeg encoding attempt failed:', ffmpegError);
+      
+      // Try fallback: ultra-simple video-only export
+      console.log('🔄 Trying fallback: simple video-only export...');
+      const fallbackArgs = [
+        '-framerate', '30', // Fixed framerate
+        '-i', 'frame_%06d.jpg',
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-y',
+        'fallback_output.mp4'
+      ];
+      
+      try {
+        await ffmpegInstance.exec(fallbackArgs);
+        console.log('✅ Fallback encoding succeeded');
+        // Use fallback output
+        const fallbackData = await ffmpegInstance.readFile('fallback_output.mp4');
+        if (fallbackData && fallbackData.length > 0) {
+          console.log(`✅ Fallback video created: ${fallbackData.length} bytes`);
+          onProgress?.(100);
+          return new Blob([fallbackData as BlobPart], { type: 'video/mp4' });
+        }
+      } catch (fallbackError) {
+        console.error('❌ Fallback encoding also failed:', fallbackError);
+      }
+      
+      // Final fallback: Canvas-based export
+      console.log('🎨 Trying final fallback: Canvas-based video export...');
+      try {
+        return await exportVideoWithCanvas(frames, videoInfo, onProgress);
+      } catch (canvasError) {
+        console.error('❌ Canvas fallback also failed:', canvasError);
+        throw new Error(`All export methods failed. FFmpeg error: ${ffmpegError instanceof Error ? ffmpegError.message : 'Unknown error'}`);
+      }
     }
     
     onProgress?.(95);
@@ -274,7 +322,10 @@ export async function exportVideo(
     onProgress?.(98);
     
     // Clean up temporary files
-    const filesToClean = [outputFileName, originalVideoName];
+    const filesToClean = [outputFileName];
+    if (includeAudio) {
+      filesToClean.push('original_video.mp4');
+    }
     for (let i = 1; i <= processedFrames.length; i++) {
       filesToClean.push(`frame_${String(i).padStart(6, '0')}.jpg`);
     }

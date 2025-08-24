@@ -180,61 +180,101 @@ const ExportControls = () => {
 
       setExportStage('🎉 Export completed! Starting download...');
       
-      // Enhanced download with multiple attempts and user feedback
+      // Force immediate download without waiting for attemptDownload result
       try {
         console.log(`📥 Starting download: ${videoBlob.size} bytes, type: ${videoBlob.type}`);
         
-        // Attempt download with enhanced error handling
-        console.log('🔄 Attempting automatic download...');
-        const downloadSuccess = await attemptDownload(videoBlob, video.name, video.format);
+        // Create download immediately using multiple methods
+        const fileName = generateCleanFilename(video.name, video.format, videoBlob.type);
+        const downloadUrl = URL.createObjectURL(videoBlob);
         
-        // Give the browser a moment to process the download
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Method 1: Direct download link
+        const downloadLink = document.createElement('a');
+        downloadLink.href = downloadUrl;
+        downloadLink.download = fileName;
+        downloadLink.style.display = 'none';
+        document.body.appendChild(downloadLink);
         
-        if (downloadSuccess) {
-          setExportStage('✅ Download started successfully!');
-          console.log('✅ Video download initiated successfully');
-        } else {
-          setExportStage('⚠️ Download failed - trying alternative method...');
-          
-          // Fallback: Show download link if automatic download fails
-          const downloadUrl = URL.createObjectURL(videoBlob);
-          const fileName = generateCleanFilename(video.name, video.format, videoBlob.type);
-          
-          // Create a persistent download link
-          setExportStage(`📥 Click to download: ${fileName}`);
-          
-          // Try a more aggressive download method
-          const link = document.createElement('a');
-          link.href = downloadUrl;
-          link.download = fileName;
-          link.style.display = 'none';
-          document.body.appendChild(link);
-          
-          // Force click with multiple events
-          setTimeout(() => {
-            link.click();
+        // Trigger download immediately
+        console.log('🔄 Triggering download...', { fileName, blobSize: videoBlob.size, blobType: videoBlob.type });
+        downloadLink.click();
+        
+        // Verify the link was created properly
+        console.log('Download link created:', { href: downloadLink.href, download: downloadLink.download });
+        
+        // Method 2: Alternative click
+        setTimeout(() => {
+          downloadLink.click();
+          const clickEvent = new MouseEvent('click', {
+            view: window,
+            bubbles: true,
+            cancelable: true
+          });
+          downloadLink.dispatchEvent(clickEvent);
+        }, 100);
+        
+        // Method 3: Force click again
+        setTimeout(() => {
+          downloadLink.click();
+        }, 300);
+        
+        // Clean up
+        setTimeout(() => {
+          document.body.removeChild(downloadLink);
+          URL.revokeObjectURL(downloadUrl);
+        }, 5000);
+        
+        setExportStage('✅ Download should start now! Check your Downloads folder.');
+        console.log('✅ Download triggered using multiple methods');
+        
+        // Show backup download button after 3 seconds if needed
+        setTimeout(() => {
+          if (isExporting) {
+            // Create a backup download button in the UI
+            setExportStage('If download didn\'t start, use the button below:');
             
-            // Try different click methods
-            const event = new MouseEvent('click', {
-              view: window,
-              bubbles: true,
-              cancelable: true
-            });
-            link.dispatchEvent(event);
+            // Create download button that persists in the component
+            const backupButton = document.createElement('button');
+            backupButton.textContent = `📥 Download ${fileName}`;
+            backupButton.className = 'btn btn-success';
+            backupButton.style.cssText = `
+              margin: 10px auto;
+              display: block;
+              padding: 12px 24px;
+              font-size: 16px;
+              font-weight: 600;
+              background: #10b981;
+              color: white;
+              border: none;
+              border-radius: 8px;
+              cursor: pointer;
+              min-width: 200px;
+            `;
             
-            // Try programmatic click
-            if (link.click) {
-              link.click();
+            backupButton.onclick = () => {
+              // Create fresh download URL and link
+              const backupUrl = URL.createObjectURL(videoBlob);
+              const finalLink = document.createElement('a');
+              finalLink.href = backupUrl;
+              finalLink.download = fileName;
+              finalLink.click();
+              backupButton.remove();
+              setTimeout(() => URL.revokeObjectURL(backupUrl), 1000);
+              setExportStage('✅ Download completed!');
+            };
+            
+            const exportControls = document.querySelector('.export-controls');
+            if (exportControls) {
+              exportControls.appendChild(backupButton);
             }
-            
-            document.body.removeChild(link);
-            
-            setTimeout(() => {
-              URL.revokeObjectURL(downloadUrl);
-              setExportStage('✅ Download should have started! Check your Downloads folder.');
-            }, 1000);
-          }, 500);
+          }
+        }, 3000);
+        
+        // Also try the original attemptDownload as backup
+        try {
+          await attemptDownload(videoBlob, video.name, video.format);
+        } catch (backupError) {
+          console.log('Backup download method also tried:', backupError);
         }
         
       } catch (downloadError) {

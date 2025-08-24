@@ -210,14 +210,44 @@ export async function exportVideo(
   }
 }
 
+// Sanitize filename to remove problematic characters
+function sanitizeFilename(filename: string): string {
+  return filename
+    // Remove or replace problematic characters
+    .replace(/[#@$%^&*()+=\[\]{}|\\:";'<>?,/]/g, '') // Remove special chars
+    .replace(/[^\w\s.-]/g, '') // Keep only word chars, spaces, dots, hyphens
+    .replace(/\s+/g, '_') // Replace spaces with underscores
+    .replace(/_{2,}/g, '_') // Replace multiple underscores with single
+    .replace(/^[._-]+|[._-]+$/g, '') // Remove leading/trailing dots, underscores, hyphens
+    .substring(0, 100) // Limit length to prevent issues
+    .trim();
+}
+
+// Generate clean, professional filename
+function generateCleanFilename(originalFileName: string, format: string): string {
+  // Remove extension from original name
+  const baseName = originalFileName.replace(/\.[^/.]+$/, '');
+  
+  // Sanitize the base name
+  const cleanBaseName = sanitizeFilename(baseName);
+  
+  // Fallback to generic name if sanitization removes everything
+  const finalBaseName = cleanBaseName || 'edited_video';
+  
+  // Add timestamp to make filename unique
+  const timestamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '_');
+  
+  // Generate final clean filename
+  return `${finalBaseName}_${timestamp}.${format.toLowerCase()}`;
+}
+
 // Download the exported video with correct filename
 export function downloadVideo(blob: Blob, originalFileName: string, format: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   
-  // Generate filename with original name and format
-  const baseName = originalFileName.replace(/\.[^/.]+$/, ''); // Remove extension
-  const fileName = `${baseName}_edited.${format.toLowerCase()}`;
+  // Generate clean, safe filename
+  const fileName = generateCleanFilename(originalFileName, format);
   
   link.href = url;
   link.download = fileName;

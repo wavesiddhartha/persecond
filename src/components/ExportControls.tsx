@@ -4,6 +4,27 @@ import { useState } from 'react';
 import { useVideoStore } from '@/store/videoStore';
 import { exportVideo, downloadVideo, getEstimatedExportTime } from '@/utils/videoExporter';
 
+// Generate preview of clean filename (same logic as in videoExporter)
+function generateCleanFilenamePreview(originalFileName: string, format: string): string {
+  const sanitizeFilename = (filename: string): string => {
+    return filename
+      .replace(/[#@$%^&*()+=\[\]{}|\\:";'<>?,/]/g, '')
+      .replace(/[^\w\s.-]/g, '')
+      .replace(/\s+/g, '_')
+      .replace(/_{2,}/g, '_')
+      .replace(/^[._-]+|[._-]+$/g, '')
+      .substring(0, 100)
+      .trim();
+  };
+
+  const baseName = originalFileName.replace(/\.[^/.]+$/, '');
+  const cleanBaseName = sanitizeFilename(baseName);
+  const finalBaseName = cleanBaseName || 'edited_video';
+  const timestamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '_');
+  
+  return `${finalBaseName}_${timestamp}.${format.toLowerCase()}`;
+}
+
 const ExportControls = () => {
   const { video, frames } = useVideoStore();
   const [isExporting, setIsExporting] = useState(false);
@@ -74,9 +95,35 @@ const ExportControls = () => {
   }
 
   const estimatedTime = getEstimatedExportTime(frames.length, video.width, video.height);
+  const previewFilename = generateCleanFilenamePreview(video.name, video.format);
 
   return (
     <div>
+      {/* Filename Preview */}
+      <div style={{ 
+        marginBottom: '16px',
+        padding: '12px',
+        background: 'var(--surface-elevated)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-lg)',
+      }}>
+        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+          Export filename:
+        </div>
+        <div style={{ 
+          fontSize: '13px', 
+          color: 'var(--text-primary)',
+          fontFamily: 'var(--font-mono)',
+          wordBreak: 'break-all',
+          lineHeight: '1.4'
+        }}>
+          {previewFilename}
+        </div>
+        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+          ✨ Automatically cleaned for compatibility
+        </div>
+      </div>
+
       {/* Video Info */}
       <div className="export-info">
         <div className="export-stat">

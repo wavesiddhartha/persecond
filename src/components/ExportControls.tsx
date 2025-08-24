@@ -31,19 +31,30 @@ const ExportControls = () => {
   const [exportProgress, setExportProgress] = useState(0);
   const [exportStage, setExportStage] = useState('');
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportWarning, setExportWarning] = useState<string | null>(null);
 
   const handleExportVideo = async () => {
     if (!video || frames.length === 0) {
-      alert('No video to export');
+      setExportError('No video to export. Please upload a video first.');
       return;
+    }
+
+    // Pre-export checks and warnings
+    setExportWarning(null);
+    if (frames.length > 500) {
+      setExportWarning(`Large video with ${frames.length} frames. Export may take several minutes.`);
     }
 
     setIsExporting(true);
     setExportProgress(0);
-    setExportStage('Initializing...');
+    setExportStage('Initializing export...');
     setExportError(null);
 
-    console.log('🚀 Starting export process...');
+    console.log('🚀 Starting export process...', {
+      frameCount: frames.length,
+      videoDimensions: `${video.width}x${video.height}`,
+      videoFormat: video.format
+    });
 
     try {
       // Export video with progress tracking
@@ -53,17 +64,17 @@ const ExportControls = () => {
         (progress) => {
           setExportProgress(progress);
           
-          // Update stage based on progress
+          // Update stage based on progress with more detailed info
           if (progress < 10) {
-            setExportStage('Loading FFmpeg...');
-          } else if (progress < 60) {
-            setExportStage('Processing frames...');
+            setExportStage('Starting export...');
+          } else if (progress < 70) {
+            setExportStage('Processing frames with adjustments...');
           } else if (progress < 80) {
-            setExportStage('Writing frames...');
+            setExportStage('Creating video...');
           } else if (progress < 95) {
-            setExportStage('Encoding video...');
+            setExportStage('Recording video...');
           } else {
-            setExportStage('Finalizing...');
+            setExportStage('Finalizing export...');
           }
         }
       );
@@ -154,6 +165,43 @@ const ExportControls = () => {
           <div className="export-stat-value">{estimatedTime}</div>
         </div>
       </div>
+
+      {/* Pre-export Warning */}
+      {exportWarning && !isExporting && (
+        <div style={{ 
+          marginBottom: '16px',
+          padding: '12px',
+          background: 'rgba(251, 191, 36, 0.1)',
+          border: '1px solid #f59e0b',
+          borderRadius: 'var(--radius-md)',
+          fontSize: '12px',
+          color: '#f59e0b',
+          lineHeight: '1.4'
+        }}>
+          <strong>⚠️ Notice:</strong><br />
+          {exportWarning}
+        </div>
+      )}
+
+      {/* Export Error (when not exporting) */}
+      {exportError && !isExporting && (
+        <div style={{ 
+          marginBottom: '16px',
+          padding: '12px',
+          background: 'rgba(220, 38, 38, 0.1)',
+          border: '1px solid var(--error)',
+          borderRadius: 'var(--radius-md)',
+          fontSize: '12px',
+          color: 'var(--error)',
+          lineHeight: '1.4'
+        }}>
+          <strong>❌ Error:</strong><br />
+          {exportError}
+          <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-muted)' }}>
+            Check browser console (F12) for detailed logs
+          </div>
+        </div>
+      )}
 
       {/* Export Status */}
       {isExporting ? (

@@ -1,46 +1,78 @@
-# persecond
+# PerSecond - Professional Video Editor
 
-Professional frame-by-frame video editing with Apple-quality precision tools.
+A top-tier video editing application with frame-by-frame editing capabilities, real-time adjustments, and professional export quality.
 
-## Features
+## ✨ Features
 
-- **Frame-by-Frame Editing**: Edit each frame individually with comprehensive adjustment controls
-- **Apple-Quality Tools**: Professional exposure, color grading, and creative effects
-- **GPU-Accelerated Preview**: Real-time WebGL processing for instant feedback
-- **Dynamic Layout**: Automatically adjusts based on video aspect ratio
-- **Audio Preservation**: Maintains original audio during export
-- **Multiple Formats**: Supports MP4, MOV, AVI, MKV, WebM, and more
-- **Privacy First**: All processing happens locally in your browser
+- **Frame-by-Frame Editing**: Edit individual frames with precision
+- **Real-time Preview**: GPU-accelerated WebGL processing for instant feedback
+- **Professional Adjustments**: 25+ professional photo editing controls
+- **High-Quality Export**: Maintains original 4K/8K quality with audio preservation
+- **Format Preservation**: Exports in exact original format (MP4→MP4, MOV→MOV, etc.)
+- **Cross-Platform**: Works on desktop and mobile browsers
+- **Multiple Export Methods**: FFmpeg + Canvas fallbacks for maximum compatibility
 
-## Getting Started
+## 🚀 Quick Start
 
-First, run the development server:
+### Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) with your browser.
 
-## How to Use
+### Production Build
 
-1. Upload your video file
-2. Navigate through frames using the percentage-based slider or frame grid
-3. Apply adjustments to individual frames
-4. Use "Apply to All Frames" to copy adjustments across all frames
-5. Export your edited video with preserved audio
+```bash
+npm run build
+npm start
+```
 
-## Tech Stack
+## 🌐 Deploy to Vercel
 
-- **Next.js 14** - React framework
-- **TypeScript** - Type safety
-- **WebGL** - GPU-accelerated image processing
-- **FFmpeg.wasm** - Video export with audio preservation
-- **Zustand** - State management
-- **Canvas API** - Frame extraction and manipulation
+### Method 1: GitHub Integration (Recommended)
+
+1. **Connect GitHub Repository**:
+   - Go to [vercel.com](https://vercel.com)
+   - Click "Import Project" or "Add New..."
+   - Select "GitHub" and find your repository: `wavesiddhartha/persecond`
+
+2. **Configure Project**:
+   - Framework Preset: **Next.js**
+   - Root Directory: `./` (leave as default)
+   - Build Command: `npm run build` (default)
+   - Output Directory: `.next` (default)
+   - Install Command: `npm install` (default)
+
+3. **Deploy**:
+   - Click "Deploy"
+   - Your app will be live at: `https://your-project-name.vercel.app`
+
+### Method 2: Vercel CLI
+
+```bash
+# Login to Vercel (choose GitHub)
+npx vercel login
+
+# Deploy to production
+npx vercel --prod
+```
+
+## 🎯 Export Capabilities
+
+- **Quality**: Lossless PNG frame processing with visually lossless encoding (CRF 18)
+- **Audio**: Original audio preserved using FFmpeg
+- **Formats**: MP4, MOV, AVI, WebM, MKV, M4V, 3GP, FLV, WMV
+- **Resolution**: Maintains original resolution up to 8K
+- **Performance**: Optimized for smooth UI during processing
+
+## 🔧 Technical Details
+
+### Architecture
+- **Frontend**: Next.js 15.5.0 with TypeScript
+- **State Management**: Zustand
+- **Image Processing**: WebGL shaders
+- **Video Export**: FFmpeg.js + Canvas API
+- **Styling**: CSS modules with CSS variables

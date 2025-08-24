@@ -30,6 +30,7 @@ const ExportControls = () => {
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportStage, setExportStage] = useState('');
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const handleExportVideo = async () => {
     if (!video || frames.length === 0) {
@@ -40,6 +41,9 @@ const ExportControls = () => {
     setIsExporting(true);
     setExportProgress(0);
     setExportStage('Initializing...');
+    setExportError(null);
+
+    console.log('🚀 Starting export process...');
 
     try {
       // Export video with progress tracking
@@ -76,11 +80,18 @@ const ExportControls = () => {
       }, 2000);
 
     } catch (error) {
-      console.error('Export failed:', error);
-      alert(`Export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setIsExporting(false);
-      setExportProgress(0);
-      setExportStage('');
+      console.error('❌ Export failed:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setExportError(errorMessage);
+      setExportStage('Export failed');
+      
+      // Auto-hide error after 10 seconds
+      setTimeout(() => {
+        setIsExporting(false);
+        setExportProgress(0);
+        setExportStage('');
+        setExportError(null);
+      }, 10000);
     }
   };
 
@@ -148,7 +159,9 @@ const ExportControls = () => {
       {isExporting ? (
         <div className="progress-container">
           <div className="progress-header">
-            <span className="progress-label">{exportStage}</span>
+            <span className={`progress-label ${exportError ? 'error' : ''}`}>
+              {exportError ? '❌ Export Failed' : exportStage}
+            </span>
             <span className="progress-percentage">
               {Math.round(exportProgress)}%
             </span>
@@ -157,13 +170,35 @@ const ExportControls = () => {
           <div className="progress-bar">
             <div
               className="progress-fill"
-              style={{ width: `${exportProgress}%` }}
+              style={{ 
+                width: `${exportProgress}%`,
+                backgroundColor: exportError ? 'var(--error)' : undefined
+              }}
             />
           </div>
           
-          <div style={{ textAlign: 'center', fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px' }}>
-            Keep this tab open during export
-          </div>
+          {exportError ? (
+            <div style={{ 
+              marginTop: '12px',
+              padding: '12px',
+              background: 'rgba(220, 38, 38, 0.1)',
+              border: '1px solid var(--error)',
+              borderRadius: 'var(--radius-md)',
+              fontSize: '12px',
+              color: 'var(--error)',
+              lineHeight: '1.4'
+            }}>
+              <strong>Error Details:</strong><br />
+              {exportError}
+              <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                Check browser console (F12) for detailed logs
+              </div>
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', fontSize: '12px', color: 'var(--text-secondary)', marginTop: '8px' }}>
+              Keep this tab open during export
+            </div>
+          )}
         </div>
       ) : (
         <button

@@ -87,10 +87,32 @@ export async function exportVideo(
   videoInfo: VideoInfo,
   onProgress?: (progress: number) => void
 ): Promise<Blob> {
+  console.log('🎬 Starting video export process...', {
+    frameCount: frames.length,
+    videoInfo: {
+      name: videoInfo.name,
+      duration: videoInfo.duration,
+      fps: videoInfo.fps,
+      width: videoInfo.width,
+      height: videoInfo.height,
+      format: videoInfo.format
+    }
+  });
+
   try {
     onProgress?.(0);
     
+    // Validate inputs
+    if (!frames || frames.length === 0) {
+      throw new Error('No frames provided for export');
+    }
+    
+    if (!videoInfo || !videoInfo.file) {
+      throw new Error('No video information or file provided');
+    }
+    
     // Initialize FFmpeg
+    console.log('🔧 Initializing FFmpeg...');
     const ffmpegInstance = await initializeFFmpeg();
     onProgress?.(5);
     
@@ -99,45 +121,92 @@ export async function exportVideo(
     onProgress?.(10);
     
     // Process all frames with their adjustments
+    console.log('🎨 Processing frames with adjustments...');
     const processedFrames: string[] = [];
     const totalFrames = frames.length;
     
     for (let i = 0; i < totalFrames; i++) {
       const frame = frames[i];
       
-      // Apply adjustments to each frame individually using WebGL
-      const processedImageData = await applyAdjustmentsGPU(
-        frame.imageData,
-        frame.adjustments
-      );
-      processedFrames.push(processedImageData);
+      try {
+        // Apply adjustments to each frame individually using WebGL
+        const processedImageData = await applyAdjustmentsGPU(
+          frame.imageData,
+          frame.adjustments
+        );
+        
+        // Validate processed frame data
+        if (!processedImageData || !processedImageData.startsWith('data:image/')) {
+          throw new Error(`Invalid processed frame data for frame ${i}`);
+        }
+        
+        processedFrames.push(processedImageData);
+        
+        if (i === 0) {
+          console.log('✅ First frame processed successfully');
+        }
+      } catch (frameError) {
+        console.error(`❌ Error processing frame ${i}:`, frameError);
+        // Use original frame data as fallback
+        processedFrames.push(frame.imageData);
+      }
       
       const frameProgress = 10 + ((i + 1) / totalFrames) * 50; // 10-60%
       onProgress?.(frameProgress);
     }
     
+    console.log(`✅ Processed ${processedFrames.length} frames successfully`);
+    
     onProgress?.(65);
     
     // Write processed frames to FFmpeg filesystem
+    console.log('📝 Writing frames to FFmpeg filesystem...');
     for (let i = 0; i < processedFrames.length; i++) {
-      const imageBlob = base64ToBlob(processedFrames[i]);
-      const fileName = `frame_${String(i + 1).padStart(6, '0')}.jpg`;
-      
-      await ffmpegInstance.writeFile(fileName, await fetchFile(imageBlob));
+      try {
+        const imageBlob = base64ToBlob(processedFrames[i]);
+        const fileName = `frame_${String(i + 1).padStart(6, '0')}.jpg`;
+        
+        if (imageBlob.size === 0) {
+          throw new Error(`Frame ${i} resulted in zero-size blob`);
+        }
+        
+        await ffmpegInstance.writeFile(fileName, await fetchFile(imageBlob));
+        
+        if (i === 0) {
+          console.log(`✅ First frame written: ${fileName} (${imageBlob.size} bytes)`);
+        }
+      } catch (writeError) {
+        console.error(`❌ Error writing frame ${i}:`, writeError);
+        throw new Error(`Failed to write frame ${i}: ${writeError instanceof Error ? writeError.message : 'Unknown error'}`);
+      }
       
       const writeProgress = 65 + ((i + 1) / processedFrames.length) * 15; // 65-80%
       onProgress?.(writeProgress);
     }
     
+    console.log(`✅ Written ${processedFrames.length} frames to FFmpeg filesystem`);
+    
     onProgress?.(80);
     
     // Use original video's framerate to preserve playback speed
     // Calculate actual framerate from frame timestamps for more accuracy
-    const actualFrameRate = frames.length > 1 ? 
-      (frames.length - 1) / (frames[frames.length - 1].timestamp - frames[0].timestamp) : 
-      (videoInfo.fps || 30);
+    let frameRate = videoInfo.fps || 30;
     
-    const frameRate = Math.max(1, Math.min(60, actualFrameRate));
+    if (frames.length > 1) {
+      const firstTimestamp = frames[0].timestamp;
+      const lastTimestamp = frames[frames.length - 1].timestamp;
+      const duration = lastTimestamp - firstTimestamp;
+      
+      if (duration > 0) {
+        const calculatedFrameRate = (frames.length - 1) / duration;
+        frameRate = calculatedFrameRate;
+      }
+    }
+    
+    // Ensure framerate is within reasonable bounds
+    frameRate = Math.max(1, Math.min(60, frameRate));
+    
+    console.log(`🎬 Video framerate: ${frameRate.toFixed(2)} fps`);
     
     // Write original video to FFmpeg filesystem for audio extraction
     const originalVideoName = 'original_video.mp4';
@@ -176,11 +245,32 @@ export async function exportVideo(
     onProgress?.(87);
     
     // Execute FFmpeg encoding
-    await ffmpegInstance.exec(ffmpegArgs);
+    console.log('🎬 Starting FFmpeg encoding with args:', ffmpegArgs);
+    
+    // Add logging callback to monitor FFmpeg output
+    ffmpegInstance.on('log', ({ message }) => {
+      console.log('FFmpeg:', message);
+    });
+    
+    try {
+      await ffmpegInstance.exec(ffmpegArgs);
+      console.log('✅ FFmpeg encoding completed successfully');
+    } catch (ffmpegError) {
+      console.error('❌ FFmpeg encoding failed:', ffmpegError);
+      throw new Error(`FFmpeg encoding failed: ${ffmpegError instanceof Error ? ffmpegError.message : 'Unknown error'}`);
+    }
+    
     onProgress?.(95);
     
     // Read the output file
+    console.log('📖 Reading output file...');
     const outputData = await ffmpegInstance.readFile(outputFileName);
+    
+    if (!outputData || outputData.length === 0) {
+      throw new Error('Output video file is empty - encoding may have failed');
+    }
+    
+    console.log(`✅ Output video file read successfully: ${outputData.length} bytes`);
     onProgress?.(98);
     
     // Clean up temporary files

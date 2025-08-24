@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useVideoStore } from '@/store/videoStore';
-import { exportVideo, downloadVideo, getEstimatedExportTime } from '@/utils/videoExporter';
+import { exportVideo, getEstimatedExportTime, generateCleanFilename, attemptDownload } from '@/utils/videoExporter';
 
 // Generate preview of clean filename (same logic as in videoExporter)
 function generateCleanFilenamePreview(originalFileName: string): string {
@@ -34,79 +34,274 @@ const ExportControls = () => {
   const [exportWarning, setExportWarning] = useState<string | null>(null);
 
   const handleExportVideo = async () => {
+    // Comprehensive pre-export validation
     if (!video || frames.length === 0) {
       setExportError('No video to export. Please upload a video first.');
       return;
     }
 
-    // Pre-export checks and warnings
-    setExportWarning(null);
-    if (frames.length > 500) {
-      setExportWarning(`Large video with ${frames.length} frames. Export may take several minutes.`);
+    if (!video.file || video.file.size === 0) {
+      setExportError('Invalid video file. Please upload a valid video.');
+      return;
     }
 
+    // Enhanced browser compatibility checks
+    if (!window.Worker) {
+      setExportError('Your browser does not support web workers. Please use Chrome 4+, Firefox 3.5+, Safari 4+, or Edge.');
+      return;
+    }
+
+    if (!window.URL || !window.URL.createObjectURL) {
+      setExportError('Your browser does not support file downloads. Please use a modern browser.');
+      return;
+    }
+
+    if (!window.WebGL2RenderingContext && !window.WebGLRenderingContext) {
+      setExportError('Your browser does not support WebGL. Please enable WebGL or use a different browser.');
+      return;
+    }
+
+    // Mobile-specific checks
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (isMobile && frames.length > 500) {
+      setExportWarning(`⚠️ Mobile device detected with ${frames.length} frames. Export may be slower or fail. Consider using a desktop for large videos.`);
+    }
+
+    // Check for iOS Safari specific limitations
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    if (isIOS && video.file.size > 50 * 1024 * 1024) { // Check original file size for iOS
+      setExportWarning('⚠️ iOS detected with large video. Downloads may be limited. Consider reducing video size.');
+    }
+
+    // Check if frames have valid data
+    const invalidFrames = frames.filter(frame => !frame.imageData || !frame.imageData.startsWith('data:image/'));
+    if (invalidFrames.length > 0) {
+      setExportError(`${invalidFrames.length} frames have invalid data. Please reload the video.`);
+      return;
+    }
+
+    // Memory and performance checks
+    const estimatedMemoryUsage = frames.length * video.width * video.height * 4; // Rough estimate in bytes
+    const navigatorWithMemory = navigator as Navigator & { deviceMemory?: number };
+    const availableMemory = navigatorWithMemory.deviceMemory ? navigatorWithMemory.deviceMemory * 1024 * 1024 * 1024 : 4 * 1024 * 1024 * 1024; // Default 4GB
+    
+    if (estimatedMemoryUsage > availableMemory * 0.8) {
+      setExportWarning(`⚠️ Large video detected. Export may be slow or fail on this device. Consider reducing video size.`);
+    }
+
+    // Enhanced pre-export checks and warnings
+    setExportWarning(null);
+    if (frames.length > 1000) {
+      setExportWarning(`⚠️ Very large video (${frames.length} frames). Export may take 10+ minutes.`);
+    } else if (frames.length > 500) {
+      setExportWarning(`📹 Large video (${frames.length} frames). Export may take several minutes.`);
+    }
+
+    // Check for disk space (if available)
+    if ('storage' in navigator && 'estimate' in navigator.storage) {
+      try {
+        const estimate = await navigator.storage.estimate();
+        const availableSpace = estimate.quota ? estimate.quota - (estimate.usage || 0) : 0;
+        const estimatedOutputSize = estimatedMemoryUsage * 0.1; // Rough compression estimate
+        
+        if (availableSpace < estimatedOutputSize * 2) {
+          setExportWarning(`⚠️ Low disk space detected. Export may fail due to insufficient storage.`);
+        }
+      } catch (storageError) {
+        console.warn('Could not check storage:', storageError);
+      }
+    }
+
+    // Prevent UI freezing by deferring the export start
     setIsExporting(true);
     setExportProgress(0);
-    setExportStage('Initializing export...');
+    setExportStage('Preparing export...');
     setExportError(null);
 
-    console.log('🚀 Starting export process...', {
+    // Allow UI to update before starting heavy processing
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    console.log('🚀 Starting enhanced export process...', {
       frameCount: frames.length,
       videoDimensions: `${video.width}x${video.height}`,
-      videoFormat: video.format
+      videoFormat: video.format,
+      estimatedMemoryUsage: `${(estimatedMemoryUsage / 1024 / 1024).toFixed(2)}MB`,
+      browserInfo: {
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        memory: navigatorWithMemory.deviceMemory || 'unknown'
+      }
     });
 
     try {
-      // Export video with progress tracking
+      // Export video with progress tracking and comprehensive error handling
       const videoBlob = await exportVideo(
         frames,
         video,
         (progress) => {
-          setExportProgress(progress);
-          
-          // Update stage based on progress with FFmpeg-specific info
-          if (progress < 5) {
-            setExportStage('Starting export...');
-          } else if (progress < 10) {
-            setExportStage('Loading FFmpeg for high-quality export...');
-          } else if (progress < 55) {
-            setExportStage('Processing frames with adjustments...');
-          } else if (progress < 75) {
-            setExportStage('Writing high-quality frames...');
-          } else if (progress < 85) {
-            setExportStage(`Extracting audio from ${video.format.toUpperCase()} file...`);
-          } else if (progress < 95) {
-            setExportStage(`Encoding ${video.format.toUpperCase()} with original quality...`);
-          } else {
-            setExportStage(`Finalizing ${video.format.toUpperCase()} export...`);
-          }
+          // Use requestAnimationFrame to prevent UI freezing during progress updates
+          requestAnimationFrame(() => {
+            setExportProgress(progress);
+            
+            // Update stage based on progress with FFmpeg-specific info
+            if (progress < 5) {
+              setExportStage('Starting export...');
+            } else if (progress < 10) {
+              setExportStage('Loading FFmpeg for high-quality export...');
+            } else if (progress < 55) {
+              setExportStage('Processing frames with adjustments...');
+            } else if (progress < 75) {
+              setExportStage('Writing high-quality frames...');
+            } else if (progress < 85) {
+              setExportStage(`Extracting audio from ${video.format.toUpperCase()} file...`);
+            } else if (progress < 95) {
+              setExportStage(`Encoding ${video.format.toUpperCase()} with original quality...`);
+            } else {
+              setExportStage(`Finalizing ${video.format.toUpperCase()} export...`);
+            }
+          });
         }
       );
 
-      setExportStage('Download ready!');
-      
-      // Download the video
-      downloadVideo(videoBlob, video.name, video.format);
-      
-      setTimeout(() => {
-        setIsExporting(false);
-        setExportProgress(0);
-        setExportStage('');
-      }, 2000);
+      // Validate the exported video blob
+      if (!videoBlob) {
+        throw new Error('Export returned null - encoding failed');
+      }
 
-    } catch (error) {
-      console.error('❌ Export failed:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      setExportError(errorMessage);
-      setExportStage('Export failed');
+      if (videoBlob.size === 0) {
+        throw new Error('Export produced empty file - encoding failed');
+      }
+
+      if (videoBlob.size < 1024) {
+        console.warn(`⚠️ Very small output file: ${videoBlob.size} bytes`);
+      }
+
+      console.log(`✅ Export validation passed: ${videoBlob.size} bytes (${(videoBlob.size / 1024 / 1024).toFixed(2)}MB)`);
+
+      setExportStage('🎉 Export completed! Starting download...');
       
-      // Auto-hide error after 10 seconds
+      // Enhanced download with multiple attempts and user feedback
+      try {
+        console.log(`📥 Starting download: ${videoBlob.size} bytes, type: ${videoBlob.type}`);
+        
+        // Attempt download with enhanced error handling
+        console.log('🔄 Attempting automatic download...');
+        const downloadSuccess = await attemptDownload(videoBlob, video.name, video.format);
+        
+        // Give the browser a moment to process the download
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        if (downloadSuccess) {
+          setExportStage('✅ Download started successfully!');
+          console.log('✅ Video download initiated successfully');
+        } else {
+          setExportStage('⚠️ Download failed - trying alternative method...');
+          
+          // Fallback: Show download link if automatic download fails
+          const downloadUrl = URL.createObjectURL(videoBlob);
+          const fileName = generateCleanFilename(video.name, video.format, videoBlob.type);
+          
+          // Create a persistent download link
+          setExportStage(`📥 Click to download: ${fileName}`);
+          
+          // Try a more aggressive download method
+          const link = document.createElement('a');
+          link.href = downloadUrl;
+          link.download = fileName;
+          link.style.display = 'none';
+          document.body.appendChild(link);
+          
+          // Force click with multiple events
+          setTimeout(() => {
+            link.click();
+            
+            // Try different click methods
+            const event = new MouseEvent('click', {
+              view: window,
+              bubbles: true,
+              cancelable: true
+            });
+            link.dispatchEvent(event);
+            
+            // Try programmatic click
+            if (link.click) {
+              link.click();
+            }
+            
+            document.body.removeChild(link);
+            
+            setTimeout(() => {
+              URL.revokeObjectURL(downloadUrl);
+              setExportStage('✅ Download should have started! Check your Downloads folder.');
+            }, 1000);
+          }, 500);
+        }
+        
+      } catch (downloadError) {
+        console.error('❌ Download error:', downloadError);
+        setExportStage('❌ Download failed - check console for details');
+      }
+      
       setTimeout(() => {
         setIsExporting(false);
         setExportProgress(0);
         setExportStage('');
         setExportError(null);
-      }, 10000);
+        setExportWarning(null);
+      }, 5000); // Longer delay to show success message
+
+    } catch (error) {
+      console.error('❌ Export failed:', error);
+      
+      // Enhanced error handling with specific messages
+      let userFriendlyError = 'Export failed';
+      let troubleshootingTips = '';
+      
+      if (error instanceof Error) {
+        const errorMsg = error.message.toLowerCase();
+        
+        if (errorMsg.includes('memory') || errorMsg.includes('out of memory')) {
+          userFriendlyError = 'Export failed due to insufficient memory';
+          troubleshootingTips = 'Try refreshing the page, closing other tabs, or using a device with more RAM.';
+        } else if (errorMsg.includes('ffmpeg')) {
+          userFriendlyError = 'FFmpeg encoding failed';
+          troubleshootingTips = 'Try refreshing the page or using a different browser (Chrome/Firefox recommended).';
+        } else if (errorMsg.includes('network') || errorMsg.includes('fetch')) {
+          userFriendlyError = 'Network error during export';
+          troubleshootingTips = 'Check your internet connection and try again.';
+        } else if (errorMsg.includes('browser') || errorMsg.includes('supported')) {
+          userFriendlyError = 'Browser compatibility issue';
+          troubleshootingTips = 'Please use Chrome, Firefox, or Safari for best results.';
+        } else {
+          userFriendlyError = error.message;
+          troubleshootingTips = 'Check browser console (F12) for detailed logs, or try refreshing the page.';
+        }
+      }
+      
+      setExportError(`${userFriendlyError}${troubleshootingTips ? ` - ${troubleshootingTips}` : ''}`);
+      setExportStage('❌ Export failed');
+      
+      // Provide recovery suggestions
+      console.log('🔧 Troubleshooting suggestions:', {
+        error: userFriendlyError,
+        tips: troubleshootingTips,
+        systemInfo: {
+          frames: frames.length,
+          resolution: `${video.width}x${video.height}`,
+          format: video.format,
+          browser: navigator.userAgent,
+          memory: navigatorWithMemory.deviceMemory || 'unknown'
+        }
+      });
+      
+      // Auto-hide error after 15 seconds with longer timeout for reading
+      setTimeout(() => {
+        setIsExporting(false);
+        setExportProgress(0);
+        setExportStage('');
+        setExportError(null);
+        setExportWarning(null);
+      }, 15000);
     }
   };
 
@@ -124,7 +319,7 @@ const ExportControls = () => {
   const previewFilename = generateCleanFilenamePreview(video.name);
 
   return (
-    <div>
+    <div className="export-controls">
       {/* Filename Preview */}
       <div style={{ 
         marginBottom: '16px',

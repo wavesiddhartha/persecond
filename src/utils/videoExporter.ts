@@ -162,18 +162,54 @@ export async function exportVideo(
     }
   });
 
+  // Validate inputs before attempting export
+  if (!frames || frames.length === 0) {
+    throw new Error('No frames provided for export');
+  }
+
+  if (!videoInfo || !videoInfo.file) {
+    throw new Error('No video information or file provided');
+  }
+
+  // Check for invalid frames
+  const invalidFrames = frames.filter(frame => !frame.imageData || !frame.imageData.startsWith('data:image/'));
+  if (invalidFrames.length > 0) {
+    throw new Error(`${invalidFrames.length} frames have invalid image data`);
+  }
+
   // Try FFmpeg export first for best quality and audio preservation
   console.log('🚀 Attempting FFmpeg export for maximum quality and audio...');
   try {
-    return await exportVideoWithFFmpeg(frames, videoInfo, onProgress);
+    const result = await exportVideoWithFFmpeg(frames, videoInfo, onProgress);
+    
+    // Validate FFmpeg result
+    if (!result || result.size === 0) {
+      throw new Error('FFmpeg export produced empty result');
+    }
+    
+    return result;
   } catch (ffmpegError) {
     console.warn('⚠️ FFmpeg export failed, trying simple method:', ffmpegError);
+    
     // Fallback to simple export
     try {
-      return await exportVideoSimple(frames, videoInfo, onProgress);
-    } catch {
+      onProgress?.(0); // Reset progress for fallback
+      const fallbackResult = await exportVideoSimple(frames, videoInfo, onProgress);
+      
+      // Validate fallback result
+      if (!fallbackResult || fallbackResult.size === 0) {
+        throw new Error('Simple export also produced empty result');
+      }
+      
+      return fallbackResult;
+    } catch (simpleError) {
       console.error('❌ Both export methods failed');
-      throw ffmpegError; // Throw the original FFmpeg error for better debugging
+      console.error('FFmpeg error:', ffmpegError);
+      console.error('Simple export error:', simpleError);
+      
+      // Provide detailed error information
+      const errorMessage = `All export methods failed. FFmpeg: ${ffmpegError instanceof Error ? ffmpegError.message : 'Unknown error'}. Simple export: ${simpleError instanceof Error ? simpleError.message : 'Unknown error'}`;
+      throw new Error(errorMessage);
     }
   }
 }
@@ -192,7 +228,7 @@ function sanitizeFilename(filename: string): string {
 }
 
 // Generate clean, professional filename
-function generateCleanFilename(originalFileName: string, format: string, mimeType?: string): string {
+export function generateCleanFilename(originalFileName: string, format: string, mimeType?: string): string {
   // Remove extension from original name
   const baseName = originalFileName.replace(/\.[^/.]+$/, '');
   
@@ -217,26 +253,98 @@ function generateCleanFilename(originalFileName: string, format: string, mimeTyp
   return `${finalBaseName}_${timestamp}.${extension}`;
 }
 
-// Download the exported video with correct filename
+// Enhanced download function with multiple attempts and better error handling
+export async function attemptDownload(blob: Blob, originalFileName: string, format: string): Promise<boolean> {
+  try {
+    // Validate blob
+    if (!blob || blob.size === 0) {
+      console.error('❌ Invalid blob for download:', blob);
+      return false;
+    }
+    
+    console.log(`📥 Attempting download: ${blob.size} bytes, type: ${blob.type}`);
+    
+    // Generate clean, safe filename
+    const fileName = generateCleanFilename(originalFileName, format, blob.type);
+    console.log(`📄 Generated filename: ${fileName}`);
+
+    // Mobile and browser specific optimizations
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    
+    // Method 1: Standard download with enhanced reliability
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    
+    link.href = url;
+    link.download = fileName;
+    link.style.display = 'none';
+    
+    // Add to DOM for better browser compatibility
+    document.body.appendChild(link);
+    
+    // Mobile and browser-specific download strategies
+    if (isIOS) {
+      // iOS-specific approach - open in new tab for better compatibility
+      setTimeout(() => {
+        const newWindow = window.open(url, '_blank');
+        if (!newWindow) {
+          // Fallback to standard download if popup blocked
+          link.click();
+        }
+        
+        setTimeout(() => {
+          if (document.body.contains(link)) {
+            document.body.removeChild(link);
+          }
+        }, 100);
+      }, 100);
+    } else {
+      // Standard and Android approach with multiple attempts
+      setTimeout(() => {
+        // Method 1: Standard click
+        link.click();
+        
+        // Method 2: Dispatch click event (for better browser compatibility)
+        const clickEvent = new MouseEvent('click', {
+          view: window,
+          bubbles: true,
+          cancelable: true
+        });
+        link.dispatchEvent(clickEvent);
+        
+        // Method 3: Alternative click for older browsers
+        if (typeof link.click === 'function') {
+          setTimeout(() => link.click(), 50);
+        }
+        
+        // Clean up after a short delay
+        setTimeout(() => {
+          if (document.body.contains(link)) {
+            document.body.removeChild(link);
+          }
+        }, 100);
+      }, 100);
+    }
+    
+    // Clean up the blob URL after a delay
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 5000);
+    
+    console.log('✅ Download link created and clicked successfully');
+    return true;
+    
+  } catch (error) {
+    console.error('❌ Download attempt failed:', error);
+    return false;
+  }
+}
+
+// Backward compatibility - simple download function
 export function downloadVideo(blob: Blob, originalFileName: string, format: string) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  
-  // Generate clean, safe filename
-  const fileName = generateCleanFilename(originalFileName, format, blob.type);
-  
-  link.href = url;
-  link.download = fileName;
-  link.style.display = 'none';
-  
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  
-  // Clean up the blob URL after a delay
-  setTimeout(() => {
-    URL.revokeObjectURL(url);
-  }, 1000);
+  attemptDownload(blob, originalFileName, format).catch(error => {
+    console.error('❌ downloadVideo failed:', error);
+  });
 }
 
 // Get estimated export time based on frame count and resolution
@@ -317,6 +425,11 @@ async function exportVideoWithFFmpeg(
       
       const frameProgress = 10 + ((i + 1) / totalFrames) * 40; // 10-50%
       onProgress?.(frameProgress);
+      
+      // Yield control every 10 frames to prevent UI blocking
+      if (i % 10 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
     }
     
     console.log(`✅ Processed ${processedFrames.length} frames successfully`);
@@ -345,6 +458,11 @@ async function exportVideoWithFFmpeg(
       
       const writeProgress = 55 + ((i + 1) / processedFrames.length) * 15; // 55-70%
       onProgress?.(writeProgress);
+      
+      // Yield control every 5 frames during write to prevent UI blocking
+      if (i % 5 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
     }
     
     console.log(`✅ Written ${processedFrames.length} frames to FFmpeg filesystem`);

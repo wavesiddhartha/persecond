@@ -178,104 +178,84 @@ const ExportControls = () => {
 
       console.log(`✅ Export validation passed: ${videoBlob.size} bytes (${(videoBlob.size / 1024 / 1024).toFixed(2)}MB)`);
 
-      setExportStage('🎉 Export completed! Starting download...');
+      // IMMEDIATE DOWNLOAD TRIGGER - SIMPLIFIED AND BULLETPROOF
+      const fileName = generateCleanFilename(video.name, video.format, videoBlob.type);
+      console.log(`🎉 EXPORT COMPLETE! File: ${fileName}, Size: ${(videoBlob.size / 1024 / 1024).toFixed(2)}MB`);
       
-      // Force immediate download without waiting for attemptDownload result
-      try {
-        console.log(`📥 Starting download: ${videoBlob.size} bytes, type: ${videoBlob.type}`);
-        
-        // Create download immediately using multiple methods
-        const fileName = generateCleanFilename(video.name, video.format, videoBlob.type);
-        const downloadUrl = URL.createObjectURL(videoBlob);
-        
-        // Method 1: Direct download link
-        const downloadLink = document.createElement('a');
-        downloadLink.href = downloadUrl;
-        downloadLink.download = fileName;
-        downloadLink.style.display = 'none';
-        document.body.appendChild(downloadLink);
-        
-        // Trigger download immediately
-        console.log('🔄 Triggering download...', { fileName, blobSize: videoBlob.size, blobType: videoBlob.type });
-        downloadLink.click();
-        
-        // Verify the link was created properly
-        console.log('Download link created:', { href: downloadLink.href, download: downloadLink.download });
-        
-        // Method 2: Alternative click
-        setTimeout(() => {
-          downloadLink.click();
-          const clickEvent = new MouseEvent('click', {
-            view: window,
-            bubbles: true,
-            cancelable: true
-          });
-          downloadLink.dispatchEvent(clickEvent);
-        }, 100);
-        
-        // Method 3: Force click again
-        setTimeout(() => {
-          downloadLink.click();
-        }, 300);
-        
-        // Clean up
-        setTimeout(() => {
-          document.body.removeChild(downloadLink);
-          URL.revokeObjectURL(downloadUrl);
-        }, 5000);
-        
-        setExportStage('✅ Download should start now! Check your Downloads folder.');
-        console.log('✅ Download triggered using multiple methods');
-        
-        // Show backup download button after 3 seconds if needed
-        setTimeout(() => {
-          if (isExporting) {
-            // Create a backup download button in the UI
-            setExportStage('If download didn\'t start, use the button below:');
-            
-            // Create download button that persists in the component
-            const backupButton = document.createElement('button');
-            backupButton.textContent = `📥 Download ${fileName}`;
-            backupButton.className = 'btn btn-success';
-            backupButton.style.cssText = `
-              margin: 10px auto;
-              display: block;
-              padding: 12px 24px;
-              font-size: 16px;
-              font-weight: 600;
-              background: #10b981;
-              color: white;
-              border: none;
-              border-radius: 8px;
-              cursor: pointer;
-              min-width: 200px;
-            `;
-            
-            backupButton.onclick = () => {
-              // Create fresh download URL and link
-              const backupUrl = URL.createObjectURL(videoBlob);
-              const finalLink = document.createElement('a');
-              finalLink.href = backupUrl;
-              finalLink.download = fileName;
-              finalLink.click();
-              backupButton.remove();
-              setTimeout(() => URL.revokeObjectURL(backupUrl), 1000);
-              setExportStage('✅ Download completed!');
-            };
-            
-            const exportControls = document.querySelector('.export-controls');
-            if (exportControls) {
-              exportControls.appendChild(backupButton);
-            }
-          }
-        }, 3000);
-        
-        // Also try the original attemptDownload as backup
-        try {
-          await attemptDownload(videoBlob, video.name, video.format);
-        } catch (backupError) {
-          console.log('Backup download method also tried:', backupError);
+      // Create download URL
+      const downloadUrl = URL.createObjectURL(videoBlob);
+      
+      // Method 1: Immediate download
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      setExportStage('✅ Download started! Check your Downloads folder.');
+      
+      // Method 2: Backup download after 1 second
+      setTimeout(() => {
+        const backupLink = document.createElement('a');
+        backupLink.href = downloadUrl;
+        backupLink.download = fileName;
+        document.body.appendChild(backupLink);
+        backupLink.click();
+        document.body.removeChild(backupLink);
+        console.log('🔄 Backup download attempted');
+      }, 1000);
+      
+      // Method 3: Show download button immediately (don't wait)
+      const downloadButton = document.createElement('button');
+      downloadButton.textContent = `📥 Download ${fileName}`;
+      downloadButton.style.cssText = `
+        margin: 16px auto 8px auto;
+        display: block;
+        padding: 12px 24px;
+        font-size: 16px;
+        font-weight: 600;
+        background: #10b981;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        min-width: 250px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      `;
+      
+      downloadButton.onclick = () => {
+        const manualLink = document.createElement('a');
+        manualLink.href = downloadUrl;
+        manualLink.download = fileName;
+        document.body.appendChild(manualLink);
+        manualLink.click();
+        document.body.removeChild(manualLink);
+        setExportStage('✅ Download completed!');
+      };
+      
+      const exportControls = document.querySelector('.export-controls');
+      if (exportControls) {
+        exportControls.appendChild(downloadButton);
+        setExportStage('Download started! Or click the button below:');
+      }
+      
+      // Clean up URL after 30 seconds
+      setTimeout(() => {
+        URL.revokeObjectURL(downloadUrl);
+        if (downloadButton.parentNode) {
+          downloadButton.remove();
         }
+      }, 30000);
+      
+      // Force export state to complete after 3 seconds
+      setTimeout(() => {
+        setIsExporting(false);
+        setExportProgress(0);
+        setExportStage('');
+        setExportError(null);
+        setExportWarning(null);
+      }, 3000);
         
       } catch (downloadError) {
         console.error('❌ Download error:', downloadError);
